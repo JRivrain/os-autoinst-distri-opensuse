@@ -1,12 +1,10 @@
 package btrfs_test;
 use base 'consoletest';
+
 use strict;
 use warnings;
 use testapi;
 use utils 'get_root_console_tty';
-use Exporter 'import';
-
-our @EXPORT_OK = qw(set_playground_disk cleanup_partition_table);
 
 =head2 set_playground_disk
 
@@ -45,10 +43,7 @@ sub snapper_nodbus_setup {
     my ($self) = @_;
     if (script_run('! systemctl is-active dbus')) {
         script_run('systemctl rescue', 0);
-        if (!check_screen('emergency-shell', 120)) {
-            assert_screen('emergency-shell-boo1134533', no_wait => 1);
-            record_soft_failure 'boo#1134533 - Welcome message is missing in emergency shell';
-        }
+        assert_screen('emergency-shell', 120);
         type_password;
         send_key 'ret';
         $self->set_standard_prompt('root');

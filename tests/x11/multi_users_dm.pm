@@ -19,8 +19,7 @@ use strict;
 use warnings;
 use testapi;
 use utils;
-use x11utils qw(handle_login handle_logout handle_welcome_screen);
-use main_common 'opensuse_welcome_applicable';
+use x11utils qw(handle_login handle_logout);
 
 sub ensure_multi_user_target {
     type_string "systemctl isolate multi-user.target\n";
@@ -70,8 +69,7 @@ sub run {
         wait_screen_change { assert_and_click('user_not_listed') };
     }
     elsif (check_var('DESKTOP', 'xfce')) {
-        # select created user #01
-        send_key_until_needlematch 'user-01-selected', 'down', 1, 3;
+        send_key 'down';                    # select created user #01
     }
     elsif (check_var('DESKTOP', 'kde')) {
         wait_screen_change { send_key 'shift-tab' };
@@ -81,7 +79,6 @@ sub run {
     # Make sure screen changed before calling handle_login function (for slow workers)
     wait_still_screen;
     handle_login($user, 1);
-    handle_welcome_screen(timeout => 120) if (opensuse_welcome_applicable);
     assert_screen 'generic-desktop', 60;
     # verify correct user is logged in
     x11_start_program('xterm');

@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright © 2018-2020 SUSE LLC
+# Copyright © 2018 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -15,36 +15,20 @@ use strict;
 use warnings;
 use base 'x11test';
 use testapi;
-use version_utils ':VERSION';
 use lockapi;
 use mmapi;
 use mm_tests;
 
 sub run {
     my $self = shift;
+
     # Setup static NETWORK
     $self->configure_static_ip_nm('10.0.2.17/24');
 
     mutex_lock 'win_server_ready';
 
-    ensure_installed('remmina');
-
-    # Disable Remmina news before launch Remmina
-    x11_start_program('xterm');
-    my $pref_dir = '~/.config/remmina';
-    assert_script_run "mkdir $pref_dir";
-    assert_script_run 'echo -e "[remmina_news]\\nperiodic_rmnews_last_get=$(date +%s)" >> ' . $pref_dir . '/remmina.pref';
-    type_string "exit\n";
-
     # Start Remmina and login the remote server
-    x11_start_program('remmina', valid => 0);
-    check_screen 'enter-pwd-2-unlock-keyring';
-    if (match_has_tag 'enter-pwd-2-unlock-keyring') {
-        type_password;
-        assert_and_click "unlock-keyring";
-    }
-
-    assert_screen 'remmina-launched';
+    x11_start_program('remmina', target_match => 'remmina-launched');
     type_string '10.0.2.18';
     send_key 'ret';
     assert_and_click 'accept-certificate-yes';
@@ -59,7 +43,6 @@ sub run {
 
     wait_still_screen 3;
     assert_screen [qw(connection-failed windows-desktop-on-remmina)];
-
     if (match_has_tag 'connection-failed') {
         record_soft_failure 'bsc#1117402 - Remmina is not able to connect to the windows server';
         send_key "alt-f4";

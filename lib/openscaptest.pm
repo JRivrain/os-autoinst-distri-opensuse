@@ -1,4 +1,4 @@
-# Copyright (C) 2017-2020 SUSE LLC
+# Copyright (C) 2017-2018 SUSE LLC
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -14,7 +14,7 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 
 # Summary: Base module for openSCAP test cases
-# Maintainer: llzhao <llzhao@suse.com>
+# Maintainer: Wes <whdu@suse.com>
 # Tags: poo#37006
 
 package openscaptest;
@@ -70,7 +70,7 @@ sub validate_result {
         assert_script_run "xmllint --noout $xml_args $result_file";
     }
 
-    validate_script_output "cat $result_file", sub { $match }, timeout => 300;
+    validate_script_output "cat $result_file", sub { $match };
     upload_logs($result_file);
 }
 
@@ -82,11 +82,10 @@ sub ensure_generated_file {
 }
 
 sub prepare_remediate_validation {
-    validate_script_output "[ -f /usr/etc/securetty ] && cat /usr/etc/securetty || cat /etc/securetty", sub { m/tty[1-6]/ };
-    validate_script_output "cat /proc/sys/kernel/sysrq",                                                sub { m/[1-9]+$/ };
+    validate_script_output "cat /etc/securetty",         sub { m/tty[1-6]/ };
+    validate_script_output "cat /proc/sys/kernel/sysrq", sub { m/[1-9]+$/ };
 
-    assert_script_run "[ -f /usr/etc/securetty ] && cp /usr/etc/securetty /tmp/ || true";
-    assert_script_run "[ -f /etc/securetty ] && cp /etc/securetty /tmp/ || true";
+    assert_script_run "cp /etc/securetty /tmp/";
     assert_script_run "cp /proc/sys/kernel/sysrq /tmp/";
 }
 

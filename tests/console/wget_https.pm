@@ -8,7 +8,7 @@
 # without any warranty.
 
 # Summary: FIPS: wget
-# Maintainer: Ben Chou <bchou@suse.com>
+# Maintainer: dehai <dhkong@suse.com>
 # Tags: tc#1461937
 
 

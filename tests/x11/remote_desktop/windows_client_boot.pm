@@ -10,7 +10,7 @@
 # Summary: Boot into MS Windows from grub
 # Maintainer: GraceWang <gwang@suse.com>
 
-use base 'y2_installbase';
+use base "y2logsstep";
 use strict;
 use warnings;
 use testapi;

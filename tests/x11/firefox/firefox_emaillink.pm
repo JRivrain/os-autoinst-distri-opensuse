@@ -9,11 +9,6 @@
 # without any warranty.
 
 # Summary: Firefox emaillink test (Case#1436117)
-# - Launch xterm, kill firefox, cleanup previous firefox configuration, launch
-# firefox
-# - Open file menu and "Email link"
-# - Handle sending email using email client
-# - Exit firefox
 # Maintainer: wnereiz <wnereiz@github>
 
 use strict;
@@ -47,7 +42,7 @@ sub run {
             sleep 1;
             type_string "test\@suse.com\n";
             sleep 1;
-            send_key 'home';    # beginning of subject
+            send_key 'home';      # beginning of subject
             sleep 1;
             send_key 'ctrl-k';    # delete existing subject
             sleep 1;

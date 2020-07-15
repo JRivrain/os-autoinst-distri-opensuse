@@ -14,9 +14,11 @@
 
 package publiccloud::gce;
 use Mojo::Base 'publiccloud::provider';
-use Mojo::Util qw(b64_decode trim);
+use Mojo::Util 'b64_decode';
 use Mojo::JSON 'decode_json';
 use testapi;
+use strict;
+use warnings;
 use utils;
 
 use constant CREDENTIALS_FILE => '/root/google_credentials.json';
@@ -59,11 +61,12 @@ sub create_credentials_file {
           . '}';
     } else {
         record_info('INFO', 'Get credentials from VAULT server.');
-        my $data = $self->vault_get_secrets('/gcp/key/openqa-role');
-        $credentials_file = b64_decode($data->{private_key_data});
+        my $res = $self->vault_api('/v1/gcp/key/openqa-role', method => 'get');
+        $credentials_file = b64_decode($res->{data}->{private_key_data});
         my $cf_json = decode_json($credentials_file);
         $self->account($cf_json->{client_email});
         $self->project_id($cf_json->{'project_id'});
+        $self->vault_lease_id($res->{lease_id});
     }
 
     save_tmp_file(CREDENTIALS_FILE, $credentials_file);
@@ -75,33 +78,27 @@ sub file2name {
     my ($self, $file) = @_;
     my $name = $file;
     $name = lc $file;    # lower case
-    $name =~ s/\.tar\.gz$//;     # removes tar.gz
-    $name =~ s/\./-/g;
-    $name =~ s/[^-a-z0-9]//g;    # only allowed characteres from Google Cloud
+    $name =~ s/[^a-z0-9]//g;    # only allowed characteres from Google Cloud
+    $name =~ s/targz$//;        # removes targz
     return $name;
 }
 
 sub find_img {
     my ($self, $name) = @_;
     my $img_name = $self->file2name($name);
-    my $out      = script_output("gcloud --format json compute images list --filter='name~$img_name'", 10, proceed_on_failure => 1);
-    return unless ($out);
-    my $json = decode_json($out);
-    return if (@{$json} == 0);
-    return $json->[0]->{name};
+    my $out      = script_output("gcloud compute images list --filter='name~$img_name'|grep -v NAME", 10, proceed_on_failure => 1);
+    return if (!$out || $out =~ m/0 items/);
+    my ($image) = $out =~ /(\w+)/;
+    return $image;
 }
 
 sub upload_img {
-    my ($self, $file, $type) = @_;
-    my $img_name          = $self->file2name($file);
-    my $uri               = $self->storage_name . '/' . $file;
-    my $guest_os_features = get_var('PUBLIC_CLOUD_GCE_UPLOAD_GUEST_FEATURES', 'MULTI_IP_SUBNET,UEFI_COMPATIBLE,VIRTIO_SCSI_MULTIQUEUE');
+    my ($self, $file) = @_;
+    my $img_name = $self->file2name($file);
+    my $uri      = $self->storage_name . '/' . $file;
 
-    assert_script_run("gsutil cp '$file' 'gs://$uri'", timeout => 60 * 60);
-
-    my $cmd = "gcloud compute images create '$img_name' --source-uri 'gs://$uri'";
-    $cmd .= " --guest-os-features '$guest_os_features'" unless (trim($guest_os_features) eq '');
-    assert_script_run($cmd, timeout => 60 * 10);
+    assert_script_run("gsutil cp $file gs://$uri",                                     timeout => 60 * 60);
+    assert_script_run("gcloud compute images create $img_name --source-uri gs://$uri", timeout => 60 * 10);
 
     if (!$self->find_img($file)) {
         die("Cannot find image after upload!");
@@ -109,7 +106,7 @@ sub upload_img {
     return $img_name;
 }
 
-sub img_proof {
+sub ipa {
     my ($self, %args) = @_;
 
     $args{credentials_file} = CREDENTIALS_FILE;
@@ -117,79 +114,7 @@ sub img_proof {
     $args{user}          //= 'susetest';
     $args{provider}      //= 'gce';
 
-    return $self->run_img_proof(%args);
-}
-
-sub terraform_apply {
-    my ($self, %args) = @_;
-    $args{project} //= $self->project_id;
-    return $self->SUPER::terraform_apply(%args);
-}
-
-sub describe_instance
-{
-    my ($self, $instance) = @_;
-    my $name     = $instance->instance_id();
-    my $attempts = 10;
-
-    my $out = [];
-    while (@{$out} == 0 && $attempts-- > 0) {
-        $out = decode_json(script_output("gcloud compute instances list --filter=\"name=( 'NAME' '$name')\" --format json", quiet => 1));
-        sleep 3;
-    }
-
-    die("Unable to retrive description of instance $name") unless ($attempts > 0);
-    return $out->[0];
-}
-
-sub get_state_from_instance
-{
-    my ($self, $instance) = @_;
-    my $name = $instance->instance_id();
-
-    my $desc = $self->describe_instance($instance);
-    die("Unable to get status") unless exists($desc->{status});
-    return $desc->{status};
-}
-
-sub get_ip_from_instance
-{
-    my ($self, $instance) = @_;
-    my $name = $instance->instance_id();
-
-    my $desc = $self->describe_instance($instance);
-    die("Unable to get public_ip") unless exists($desc->{networkInterfaces}->[0]->{accessConfigs}->[0]->{natIP});
-    return $desc->{networkInterfaces}->[0]->{accessConfigs}->[0]->{natIP};
-}
-
-sub stop_instance
-{
-    my ($self, $instance) = @_;
-    my $name     = $instance->instance_id();
-    my $attempts = 60;
-
-    die('Outdated instance object') if ($self->get_ip_from_instance($instance) ne $instance->public_ip);
-
-    assert_script_run("gcloud compute instances stop $name --async", quiet => 1);
-    while ($self->get_state_from_instance($instance) ne 'TERMINATED' && $attempts-- > 0) {
-        sleep 5;
-    }
-    die("Failed to stop instance $name") unless ($attempts > 0);
-}
-
-sub start_instance
-{
-    my ($self, $instance, %args) = @_;
-    my $name     = $instance->instance_id();
-    my $attempts = 60;
-
-    die("Try to start a running instance") if ($self->get_state_from_instance($instance) ne 'TERMINATED');
-
-    assert_script_run("gcloud compute instances start $name --async", quiet => 1);
-    while ($self->get_state_from_instance($instance) eq 'TERMINATED' && $attempts-- > 0) {
-        sleep 1;
-    }
-    $instance->public_ip($self->get_ip_from_instance($instance));
+    return $self->run_ipa(%args);
 }
 
 1;

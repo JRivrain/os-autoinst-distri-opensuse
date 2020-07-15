@@ -9,17 +9,6 @@
 # without any warranty.
 
 # Summary: Case#1479189: Firefox: Add-ons - Extensions
-# - Launch xterm, kill firefox, cleanup previous firefox configuration, launch
-# firefox
-# - Open firefox addon manager
-# - Open extensions
-# - Search for "flagfox"
-# - Add and confirm extension install
-# - Open url "opensuse.org"
-# - Press "alt-1" and check for flag
-# - Press "alt-2" and check for flag
-# - Press "alt-1" and check for flag
-# - Exit firefox
 # Maintainer: wnereiz <wnereiz@gmail.com>
 
 use strict;
@@ -43,13 +32,9 @@ sub run {
         assert_and_click 'firefox-extensions-flagfox';
         wait_still_screen 3;
         assert_and_click 'firefox-extensions-add-to-firefox';
-        wait_still_screen 3;
         assert_screen 'firefox-extensions-confirm-add';
         send_key 'alt-a';
         wait_still_screen 3;
-        assert_and_click 'firefox-extensions-added';
-        wait_still_screen 3;
-        assert_and_click 'firefox-extensions-flagfox-tab';
         # close the flagfox relase notes tab and flagfox search tab
         send_key_until_needlematch 'firefox-addons-plugins', 'ctrl-w', 3, 3;
         # refresh the page to see addon buttons
@@ -62,13 +47,7 @@ sub run {
     assert_screen('firefox-extensions-show_flag');
 
     send_key "alt-2";
-    wait_still_screen 3;
-    assert_and_click('firefox-extensions-menu-icon') if check_screen('firefox-extensions-menu-icon');
-    assert_and_click('firefox-extensions-remove');
-    wait_still_screen 2, 4;
-    send_key 'spc';
-    save_screenshot;
-    wait_still_screen 2, 4;
+    assert_and_click('firefox-extensions-flagfox_installed');
 
     send_key "alt-1";
     assert_screen('firefox-extensions-no_flag', 90);

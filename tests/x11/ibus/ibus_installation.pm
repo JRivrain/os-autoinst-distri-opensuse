@@ -65,8 +65,4 @@ sub run {
     ibus_daemon_started;
 }
 
-sub test_flags {
-    return {milestone => 1};
-}
-
 1;

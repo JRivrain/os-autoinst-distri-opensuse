@@ -19,11 +19,11 @@ use warnings;
 use testapi;
 
 sub run {
-    my ($self, $ctx) = @_;
+    my ($self) = @_;
     my $config = '/etc/wicked/ifconfig/sit.xml';
     record_info('Info', 'Create a SIT interface from Wicked XML files');
     $self->get_from_data('wicked/xml/sit.xml', $config);
-    $self->setup_tunnel($config, 'sit1', $ctx->iface());
+    $self->setup_tunnel($config, 'sit1');
     my $res = $self->get_test_result('sit1', 'v6');
     die if ($res eq 'FAILED');
 }

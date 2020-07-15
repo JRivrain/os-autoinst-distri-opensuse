@@ -8,31 +8,18 @@
 # without any warranty.
 
 # Summary: create and delete nis client configuration and functionality
-# Application starts and extra dependencies are needled and installed;
-# NIS Server Wizard
-# Step 1: Checks for firewall and configures ypbind service (bsc#1083487);
-# Step 2: Starts yast2 NIS service, install extra dependencies if needed;
-# Step 3: Verify firewall status on the interface (with a neddle);
-# Step 4: Check if NIS and automounter got really enabled;
-# Step 5: Enters NIS domain for "suse.de";
-# Step 6: Needle expert setting;
-# Step 7: Add NFS share and configure;
-# Step 8: Return to NFS configuration and delete configuration created before;
-# Step 9: Finish
-# Maintainer: Sergio R Lemke <slemke@suse.com>
+# Maintainer: Zaoliang Luo <zluo@suse.de>
 
 use strict;
 use warnings;
-use base "y2_module_consoletest";
-
+use base "console_yasttest";
 use testapi;
 use utils 'zypper_call';
-use version_utils 'is_sle';
 
 sub run() {
     my ($self) = @_;
     select_console 'root-console';
-    zypper_call 'in yast2-nis-client yast2-nfs-client';    # make sure yast client module installed
+    zypper_call 'in yast2-nis-client';    # make sure yast client module installed
 
     # Configure firewalld ypbind service (bsc#1083487)
     if ($self->firewall eq 'firewalld' && script_run 'firewall-offline-cmd --get-services | grep ypbind') {
@@ -42,7 +29,7 @@ sub run() {
         assert_script_run 'firewall-cmd --permanent --service=ypbind --add-port=714/udp';
         assert_script_run 'firewall-cmd --reload';
     }
-    y2_module_consoletest::yast2_console_exec(yast2_module => 'nis');
+    y2logsstep::yast2_console_exec(yast2_module => 'nis');
     assert_screen([qw(nis-client yast2_package_install)], 60);
     if (match_has_tag 'yast2_package_install') {
         send_key 'alt-i';
@@ -61,9 +48,7 @@ sub run() {
     send_key_until_needlematch 'nis-domain-empty-field', 'backspace';    # clear NIS Domain field if it is prefilled
     type_string "suse.de";
     send_key 'alt-a';
-    #clear suggested NIS server adress
-    for (1 .. 15) { send_key 'backspace'; }
-    wait_screen_change { type_string "10.162.0.1" };
+    type_string "10.162.0.1";
     wait_screen_change { send_key 'alt-p' };                             # check Netconfif NIS Policy
     send_key 'up';
     wait_screen_change { send_key 'ret' };
@@ -71,19 +56,17 @@ sub run() {
     send_key 'alt-p';                                                    # enter Netconfif NIS Policy again for custom policy
     wait_screen_change { send_key 'down' };
     send_key 'ret';
-    send_key 'alt-x';                                                    # check Expert...
-    wait_still_screen 3;
+    wait_screen_change { send_key 'alt-x' };                             # check Expert...
     wait_screen_change { send_key 'alt-b' };
     assert_screen 'expert_settings';                                     # check the needle enable Broken server
     send_key 'alt-y';
     wait_screen_change { type_string "-c" };                             # only checks if the config file has syntax errors and exits
-    wait_still_screen;
-    send_key 'alt-o';
-    wait_still_screen;
-    send_key 'alt-s';
-    wait_still_screen;
-    assert_screen 'nfs-client-configuration';                            # enter NFS configuration
-    send_key 'alt-a';                                                    # add nfs settings
+    wait_screen_change { send_key 'alt-o' };
+    wait_screen_change { send_key 'alt-s' };                             # enter NFS configuration,sometimes fails, retry
+    sleep(4);
+    send_key 'alt-s' if check_screen('nis-client');                      # Cannot use send_key_until_needlematch, see poo#48647
+    assert_screen 'nfs-client-configuration';
+    send_key 'alt-a';                                                    # add nfs share
     assert_screen 'nfs-server-hostname';                                 # check that type string is sucessful
     send_key 'alt-n';                                                    # from here enter some configurations...
     type_string "nis.suse.de";
@@ -93,9 +76,7 @@ sub run() {
     type_string "/mounts_local";
     send_key 'alt-o';
     assert_screen 'nfs_server_added';                                    # check Mount point
-    wait_still_screen;
-    send_key 'alt-t';
-    wait_still_screen 1;
+    wait_screen_change { send_key 'alt-t' };                             # go back to nfs configuration and delete configuration created before
     assert_screen 'nis_server_delete';                                   # confirm to delete configuration
     send_key 'alt-y';
     wait_still_screen 2;

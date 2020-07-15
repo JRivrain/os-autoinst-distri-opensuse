@@ -8,7 +8,7 @@
 # without any warranty.
 
 # Summary: client part of VNC wrapped with stunnel
-# Maintainer: Grace Wang <grace.wang@suse.com>
+# Maintainer: Wei Jiang <wjiang@suse.com>
 # Tags: TC1595152
 
 use base "x11test";

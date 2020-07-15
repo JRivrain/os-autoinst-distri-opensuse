@@ -1,8 +1,3 @@
-=head1 yast2_widget_utils.pm
-
-This module provides helper functions for handling YaST widgets in text and graphical mode.
-
-=cut
 # SUSE's openQA tests
 #
 # Copyright © 2018 SUSE LLC
@@ -27,11 +22,7 @@ use testapi;
 our @EXPORT = qw(change_service_configuration verify_service_configuration);
 
 =head2 verify_service_configuration
-
- verify_service_configuration([status => $status]);
-
-Verify service configuration: status. This will just verify C<assert_screen> for C<yast2_ncurses_service_$status>.
-
+Verify service configuration: status
 =cut
 sub verify_service_configuration {
     my (%args) = @_;
@@ -40,11 +31,7 @@ sub verify_service_configuration {
 }
 
 =head2 change_service_configuration
-
- change_service_configuration([after_writing => $after_writing], [after_reboot => $after_reboot]);
-
 Modify service configuration: "after writing" and/or "after reboot" steps
-
 =cut
 sub change_service_configuration {
     my (%args)            = @_;
@@ -57,15 +44,7 @@ sub change_service_configuration {
 }
 
 =head2 change_service_configuration_step
-
- change_service_configuration_step($step_name, $step_conf_ref);
-
-Modify one service configuration step.
-
-C<$step_name> is the name for change service configuration. It is a part of C<needle_selection> which is used for needle match.
-C<$step_conf_ref> is used together with 'keys' as a reference for C<$action>. It is used also with 'values' as a reference for C<$shortcut>. 
-C<$action> is a part of C<needle_selection> which is used for needle match.
-
+Modify one service configuration step
 =cut
 sub change_service_configuration_step {
     my ($step_name, $step_conf_ref) = @_;

@@ -25,15 +25,14 @@ cache:
 before_install:
   - eval $(curl https://travis-perl.github.io/init) --perl --always-upgrade-modules
   - echo "requires 'Code::DRY';" >> cpanfile
-  - echo "requires 'Regexp::Common';" >> cpanfile
-  - echo "requires 'Perl::Tidy', '== 20200110';" >> cpanfile
-  - sudo apt-get -y install yamllint
+  - echo "requires 'Perl::Tidy', '== 20181120';" >> cpanfile
 install:
   - make prepare
 script:
   - git checkout cpanfile
-  - source script/generateLibDocs.sh
   - make test
+before_deploy:
+  - script/generateUtilsDoc.sh
 deploy:
     provider: pages
     skip_cleanup: true
@@ -41,5 +40,6 @@ deploy:
     local-dir: $TRAVIS_BUILD_DIR/docs/
     on:
         branch: master
-        condition: "$NEW_DEPLOY_NEEDED = 1 && $TESTS = unit"
+        condition: $NEW_DEPLOY_NEEDED
     target_branch: gh-pages
+

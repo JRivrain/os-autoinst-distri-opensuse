@@ -87,7 +87,7 @@ unbind|down)
 
 		echo "echo -n '$DEVICE' > '$DRVPATH/unbind'"
 		echo -n "$DEVICE" > "$DRVPATH/unbind" && {
-			rm -f "/tmp/if${name}.devinfo"
+			rm "/tmp/if${name}.devinfo"
 			{
 				echo "DEVICE='$DEVICE'"
 				echo "DEVPATH='$DEVPATH'"
@@ -103,3 +103,4 @@ unbind|down)
 ;;
 esac
 exit $status
+

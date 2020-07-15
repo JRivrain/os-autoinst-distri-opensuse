@@ -15,11 +15,10 @@
 #    while launching atm.
 # Maintainer: Zaoliang Luo <zluo@suse.com>
 
-use base "y2_module_guitest";
+use base "y2x11test";
 use strict;
 use warnings;
 use testapi;
-use utils 'type_string_slow_extended';
 
 sub run {
     my $self = shift;
@@ -56,10 +55,10 @@ sub run {
     #	proctect boot loader with password
     assert_and_click 'yast2-bootloader_protect-bootloader-with-password';
     send_key 'alt-p';
-    type_string_slow_extended('dummy-password');
-    assert_screen 'yast2-bootloader_pwd_filled_up';
+    type_string 'dummy-password';
     send_key 'alt-y';
-    type_string_slow_extended('dummy-password');
+    type_string 'dummy-password';
+    wait_still_screen 3;
 
     # OK => Exit
     send_key "alt-o";

@@ -13,18 +13,8 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 #
-# Summary: Test the utility for updating AppArmor security profiles.
-# - Stops nscd and restarts auditd
-# - Create a temporary profile dir on /tmp
-# - Remove '/usr.*nscd mrix' and 'nscd\.conf' from /tmp/apparmor.d/usr.sbin.nscd
-# - Run "aa-complain -d /tmp/apparmor.d usr.sbin.nscd" check for "setting
-# complain"
-# - Start nscd, upload logfiles
-# - Run "aa-logprof -d /tmp/apparmor.d" interactivelly
-# - Check /tmp/apparmor.d/usr.sbin.nscd" for '/usr.*nscd mrix' and 'nscd\.conf'
-# - Check if nscd could start with the temporary apparmor profiles
-# - Cleanup temporary directory
-# Maintainer: llzhao <llzhao@suse.com>
+# Summary: Test the utility for updating AppArmor security profiles
+# Maintainer: Wes <whdu@suse.com>
 # Tags: poo#36892, poo#45803
 
 use base "apparmortest";
@@ -32,7 +22,7 @@ use strict;
 use warnings;
 use testapi;
 use utils;
-use version_utils 'is_tumbleweed';
+use version_utils qw(is_tumbleweed);
 
 sub run {
     my ($self) = @_;

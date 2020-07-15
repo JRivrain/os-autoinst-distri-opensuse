@@ -1,7 +1,0 @@
----
-name: qam-regression-tomcat
-description: tomcat regression test
-schedule:
-- boot/boot_to_desktop
-- x11/tomcat
-...

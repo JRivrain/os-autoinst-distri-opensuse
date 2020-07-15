@@ -1,4 +1,4 @@
-# Copyright (C) 2015-2020 SUSE LLC
+# Copyright (C) 2015-2019 SUSE LLC
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -24,8 +24,6 @@ use testapi qw(is_serial_terminal :DEFAULT);
 use lockapi 'mutex_wait';
 use mm_network;
 use version_utils qw(is_caasp is_leap is_sle is_sle12_hdd_in_upgrade is_storage_ng is_jeos);
-use Utils::Architectures qw(is_aarch64 is_ppc64le);
-use Utils::Systemd qw(systemctl disable_and_stop_service);
 use Mojo::UserAgent;
 
 our @EXPORT = qw(
@@ -44,10 +42,8 @@ our @EXPORT = qw(
   zypper_enable_install_dvd
   zypper_ar
   fully_patch_system
-  handle_patch_11sp4_zvm
   ssh_fully_patch_system
   minimal_patch_system
-  zypper_search
   workaround_type_encrypted_passphrase
   is_boot_encrypted
   is_bridged_networking
@@ -66,10 +62,10 @@ our @EXPORT = qw(
   handle_untrusted_gpg_key
   service_action
   assert_gui_app
+  run_scripted_command_slow
   get_root_console_tty
   get_x11_console_tty
   OPENQA_FTP_URL
-  IN_ZYPPER_CALL
   arrays_differ
   arrays_subset
   ensure_serialdev_permissions
@@ -80,12 +76,12 @@ our @EXPORT = qw(
   set_hostname
   show_tasks_in_blocked_state
   svirt_host_basedir
+  prepare_ssh_localhost_key_login
   disable_serial_getty
   script_retry
   script_run_interactive
   create_btrfs_subvolume
   file_content_replace
-  ensure_ca_certificates_suse_installed
 );
 
 =head1 SYNOPSIS
@@ -107,14 +103,11 @@ use constant VERY_SLOW_TYPING_SPEED => 4;
 # openQA internal ftp server url
 our $OPENQA_FTP_URL = "ftp://openqa.suse.de";
 
-# set flag IN_ZYPPER_CALL in zypper_call and unset when leaving
-our $IN_ZYPPER_CALL = 0;
+my $svirt_pty_saved = 0;
 
 =head2 save_svirt_pty
 
- save_svirt_pty();
-
-Save the pty device within the svirt shell session so that we can refer to the
+save the pty device within the svirt shell session so that we can refer to the
 correct pty pointing to the first tty, e.g. for password entry for encrypted
 partitions and rewriting the network definition of zKVM instances.
 
@@ -129,12 +122,7 @@ sub save_svirt_pty {
 
 =head2 type_line_svirt
 
- type_line_svirt($string [, expect => $expect] [, timeout => $timeout] [, fail_message => $fail_message]);
-
-Sends C<$string> to the svirt terminal, waits up to C<$timeout> seconds
-and expects C<$expect> to be returned on the terminal if C<$expect> is set.
-If the expected text is not found, it will fail with C<$fail_message>.
-
+TODO someone should document this
 =cut
 sub type_line_svirt {
     my ($string, %args) = @_;
@@ -146,16 +134,11 @@ sub type_line_svirt {
 
 =head2 unlock_zvm_disk
 
- unlock_zvm_disk($console);
-
-Unlock the zvm disk if needed.
-C<$console> should be set to C<console('x3270')>.
-C<$testapi::password> will be used as password.
-
+TODO someone should document this
 =cut
 sub unlock_zvm_disk {
     my ($console) = @_;
-    eval { $console->expect_3270(output_delim => 'Please enter passphrase', timeout => 30) };
+    eval { console('x3270')->expect_3270(output_delim => 'Please enter passphrase', timeout => 30) };
     if ($@) {
         diag 'No passphrase asked, continuing';
     }
@@ -168,13 +151,7 @@ sub unlock_zvm_disk {
 
 =head2 handle_grub_zvm
 
- handle_grub_zvm($console);
-
-Make sure that grub was started and send four enter keys to boot the system.
-C<$console> should be set to C<console('x3270')>.
-
-TODO: Add support for GRUB_BOOT_NONDEFAULT, GRUB_SELECT_FIRST_MENU, GRUB_SELECT_SECOND_MENU,
-see boot_grub_item()
+TODO someone should document this
 =cut
 sub handle_grub_zvm {
     my ($console) = @_;
@@ -189,12 +166,7 @@ sub handle_grub_zvm {
 
 =head2 handle_untrusted_gpg_key
 
- handle_untrusted_gpg_key();
-
-This function is used during the installation.
-Check if a previous needle match included the tag C<import-known-untrusted-gpg-key>.
-If yes, import the key, otherwise don't.
-
+TODO someone should document this
 =cut
 sub handle_untrusted_gpg_key {
     if (match_has_tag('import-known-untrusted-gpg-key')) {
@@ -209,11 +181,7 @@ sub handle_untrusted_gpg_key {
 
 =head2 integration_services_check_ip
 
- integration_services_check_ip();
-
 Check that guest IP address that host and guest see is the same.
-Die, if this is not the case.
-
 =cut
 sub integration_services_check_ip {
     # Workaround for poo#44771 "Can't call method "exec" on an undefined value"
@@ -244,11 +212,8 @@ sub integration_services_check_ip {
 
 =head2 integration_services_check
 
- integration_services_check();
-
 Make sure integration services (e.g. kernel modules, utilities, services)
 are present and in working condition.
-
 =cut
 sub integration_services_check {
     if (check_var('VIRSH_VMM_FAMILY', 'hyperv')) {
@@ -281,11 +246,7 @@ sub integration_services_check {
 
 =head2 unlock_if_encrypted
 
- unlock_if_encrypted([check_typed_password => $check_typed_password]);
-
-Check whether the system under test has an encrypted partition and attempts to unlock it.
-C<$check_typed_password> will default to C<0>.
-
+Check whether the system under test has an encrypted partition and attempts to unlock it
 =cut
 sub unlock_if_encrypted {
     my (%args) = @_;
@@ -324,43 +285,43 @@ sub unlock_if_encrypted {
     }
 }
 
-=head2 clear_console
+=head2 systemctl
 
- clear_console();
+Wrapper around systemctl call to be able to add some useful options.
 
-C<ctrl-l> does not get queued up in buffer.
-If this happens to fast, the screen would not be cleared.
-So this function will simply type C<clear\n>.
-
+Please note that return code of this function is handle by 'script_run' or
+'assert_script_run' function, and as such, can be different.
 =cut
+sub systemctl {
+    my ($command, %args) = @_;
+    my $expect_false = $args{expect_false} ? '!' : '';
+    my @script_params = ("$expect_false systemctl --no-pager $command", timeout => $args{timeout}, fail_message => $args{fail_message});
+    if ($args{ignore_failure}) {
+        script_run($script_params[0], $args{timeout});
+    } else {
+        assert_script_run(@script_params);
+    }
+}
+
+# 'ctrl-l' does not get queued up in buffer. If this happens to fast, the
+# screen would not be cleared
 sub clear_console {
     type_string "clear\n";
 }
 
 =head2 assert_gui_app
 
- assert_gui_app($application [, install => $install] [, exec_param => $exec_param] [, remain => $remain]);
-
 assert_gui_app (optionally installs and) starts an application, checks it started
 and closes it again. It's the most minimalistic way to test a GUI application
-
-Mandatory parameter: C<application> (the name of the application).
-
+Mandatory parameter: application: the name of the application.
 Optional parameters are:
-
- install: boolean
-     Does the application have to be installed first? Especially
-     on live images where we want to ensure the disks are complete
-     the parameter should not be set to true - otherwise we might
-     mask the fact that the app is not on the media.
-
- exec_param: string
-     When calling the application, pass this parameter on the command line.
-
- remain: boolean
-     If set to true, do not close the application when tested it is
-     running. This can be used if the application shall be tested further.
-
+   install: boolean    => does the application have to be installed first? Especially
+                         on live images where we want to ensure the disks are complete
+                         the parameter should not be set to true - otherwise we might
+                         mask the fact that the app is not on the media
+   exec_param: string => When calling the application, pass this parameter on the command line
+   remain: boolean    => If set to true, do not close the application when tested it is
+                         running. This can be used if the application shall be tested further
 =cut
 sub assert_gui_app {
     my ($application, %args) = @_;
@@ -370,20 +331,15 @@ sub assert_gui_app {
     send_key "alt-f4" unless $args{remain};
 }
 
-=head2 check_console_font
-
- check_console_font();
-
-Check the console font using a needle.
+=head2 check_console font
 
 13.2, Leap 42.1, SLE12 GA&SP1 have problems with setting up the
 console font, we need to call systemd-vconsole-setup to workaround
-that.
-
+that
 =cut
 sub check_console_font {
     # Does not make sense on ssh-based consoles
-    return if get_var('BACKEND', '') =~ /ipmi|spvm|pvm_hmc/;
+    return if get_var('BACKEND', '') =~ /ipmi|spvm/;
     # we do not await the console here, as we have to expect the font to be broken
     # for the needle to match
     select_console('root-console', await_console => 0);
@@ -401,10 +357,7 @@ sub check_console_font {
 
 =head2 type_string_slow_extended
 
- type_string_slow_extended($string);
-
-Enable additional arguments for nested calls of C<wait_still_screen>.
-
+Enable additional arguments for nested calls of wait_still_screen
 =cut
 sub type_string_slow_extended {
     my ($string) = @_;
@@ -413,10 +366,7 @@ sub type_string_slow_extended {
 
 =head2 type_string_slow
 
- type_string_slow($string);
-
-Typing a string with C<SLOW_TYPING_SPEED> to avoid losing keys.
-
+Typing a string with SLOW_TYPING_SPEED to avoid losing keys
 =cut
 sub type_string_slow {
     my ($string) = @_;
@@ -426,42 +376,35 @@ sub type_string_slow {
 
 =head2 type_string_very_slow
 
- type_string_very_slow($string);
-
-Typing a string even slower with C<VERY_SLOW_TYPING_SPEED>.
-
-The bootloader prompt line is very delicate with typing especially when
-scrolling. We are typing very slow but this could still pose problems
-when the worker host is utilized so better wait until the string is
-displayed before continuing
-For the special winter grub screen with moving penguins
-C<wait_still_screen> does not work so we just revert to sleeping a bit
-instead of waiting for a still screen which is never happening. Sleeping
-for 3 seconds is less waste of time than waiting for the
-C<wait_still_screen> to timeout, especially because C<wait_still_screen> is
-also scaled by C<TIMEOUT_SCALE> which we do not need here.
-
+Typing a string even slower with VERY_SLOW_TYPING_SPEED
 =cut
 sub type_string_very_slow {
     my ($string) = @_;
 
     type_string $string, VERY_SLOW_TYPING_SPEED;
 
+    # the bootloader prompt line is very delicate with typing especially when
+    # scrolling. We are typing very slow but this could still pose problems
+    # when the worker host is utilized so better wait until the string is
+    # displayed before continuing
+    # For the special winter grub screen with moving penguins
+    # `wait_still_screen` does not work so we just revert to sleeping a bit
+    # instead of waiting for a still screen which is never happening. Sleeping
+    # for 3 seconds is less waste of time than waiting for the
+    # wait_still_screen to timeout, especially because wait_still_screen is
+    # also scaled by TIMEOUT_SCALE which we do not need here.
     if (get_var('WINTER_IS_THERE')) {
         sleep 3;
     }
     else {
-        wait_still_screen(1, 3);
+        wait_still_screen 1;
     }
 }
 
 
 =head2 get_netboot_mirror
 
- get_netboot_mirror();
-
-Return the mirror URL eg from the C<MIRROR_HTTP> var if C<INSTALL_SOURCE> is set to C<http>.
-
+TODO someone should document this
 =cut
 sub get_netboot_mirror {
     my $m_protocol = get_var('INSTALL_SOURCE', 'http');
@@ -470,21 +413,14 @@ sub get_netboot_mirror {
 
 =head2 zypper_call
 
- zypper_call($command [, exitcode => $exitcode] [, timeout => $timeout] [, log => $log] [, dumb_term => $dumb_term]);
-
-Function wrapping 'zypper -n' with allowed return code, timeout and logging facility.
-First parammeter is required command, all others are named and provided as hash
-for example:
-
- zypper_call("up", exitcode => [0,102,103], log => "zypper.log");
-
- # up        --> zypper -n up --> update system
- # exitcode  --> allowed return code values
- # log       --> capture log and store it in zypper.log
- # dumb_term --> pipes through cat if set to 1 and log is not set. This is a  workaround
- #               to get output without any ANSI characters in zypper before 1.14.1. See boo#1055315.
-
-C<dumb_term> will default to C<is_serial_terminal()>.
+function wrapping 'zypper -n' with allowed return code, timeout and logging facility
+first parammeter is required command , all others are named and provided as hash
+for example : zypper_call("up", exitcode => [0,102,103], log => "zypper.log");
+up -- zypper -n up -- update system
+exitcode -- allowed return code values
+log -- capture log and store it in zypper.log
+dumb_term -- pipes through cat if set to 1 and log is not set. This is a  workaround
+to get output without any ANSI characters in zypper before 1.14.1. See boo#1055315.
 =cut
 sub zypper_call {
     my $command          = shift;
@@ -492,40 +428,21 @@ sub zypper_call {
     my $allow_exit_codes = $args{exitcode} || [0];
     my $timeout          = $args{timeout} || 700;
     my $log              = $args{log};
-    my $dumb_term        = $args{dumb_term} // is_serial_terminal;
+    my $dumb_term        = $args{dumb_term};
 
     my $printer = $log ? "| tee /tmp/$log" : $dumb_term ? '| cat' : '';
     die 'Exit code is from PIPESTATUS[0], not grep' if $command =~ /^((?!`).)*\| ?grep/;
 
-    $IN_ZYPPER_CALL = 1;
     # Retrying workarounds
     my $ret;
-    my $search_conflicts = 'awk \'BEGIN {print "Processing conflicts - ",NR; group=0}
-                    /Solverrun finished with an ERROR/,/statistics/{ print group"|",
-                    $0; if ($0 ~ /statistics/ ){ print "EOL"; group++ }; }\'\
-                    /var/log/zypper.log
-                    ';
-    for (1 .. 5) {
+    for (1 .. 3) {
         $ret = script_run("zypper -n $command $printer; ( exit \${PIPESTATUS[0]} )", $timeout);
         die "zypper did not finish in $timeout seconds" unless defined($ret);
         if ($ret == 4) {
             if (script_run('grep "Error code.*502" /var/log/zypper.log') == 0) {
-                die 'According to bsc#1070851 zypper should automatically retry internally. Bugfix missing for current product?';
-            } elsif (my $conflicts = script_output($search_conflicts)) {
-                record_info("Conflict", $conflicts, result => 'fail');
-                diag "Package conflicts found, not retrying anymore" if $conflicts;
-                last;
+                record_soft_failure 'Retrying because of error 502 - bsc#1070851';
+                next;
             }
-            next unless get_var('FLAVOR', '') =~ /-(Updates|Incidents)$/;
-        }
-        if (get_var('FLAVOR', '') =~ /-(Updates|Incidents)/ && ($ret == 4 || $ret == 8 || $ret == 105 || $ret == 106 || $ret == 139 || $ret == 141)) {
-            if (script_run('grep "Exiting on SIGPIPE" /var/log/zypper.log') == 0) {
-                record_soft_failure 'Zypper exiting on SIGPIPE received during package download bsc#1145521';
-            }
-            else {
-                record_soft_failure 'Retry due to network problems poo#52319';
-            }
-            next;
         }
         last;
     }
@@ -535,108 +452,46 @@ sub zypper_call {
         upload_logs('/var/log/zypper.log');
         die "'zypper -n $command' failed with code $ret";
     }
-    $IN_ZYPPER_CALL = 0;
     return $ret;
 }
 
 
 =head2 zypper_enable_install_dvd
 
- zypper_enable_install_dvd();
-
-Enables the install DVDs if they were used during the installation.
-
+TODO someone should document this
 =cut
 sub zypper_enable_install_dvd {
     # If DVD Packages is used we need to (re-)enable the local repos
     # see FATE#325541
-    zypper_call('mr -e -l') if (is_sle('15+') and (get_var('ISO_1', '') =~ /SLE-.*-Packages-.*\.iso/ || check_var('FLAVOR', 'Full')));
+    zypper_call 'mr -e -l' if is_sle('15+') and get_var('ISO_1', '') =~ /SLE-.*-Packages-.*\.iso/;
     zypper_call 'ref';
 }
 
 =head2 zypper_ar
 
- zypper_ar($url, [ name => NAME ], [ priority => N ]);
-
-Add repository (with C<zypper ar>) unless it's already repo C<$name> already added
-and refresh repositories.
-
-Options:
-
-C<$name> alias for repository, optional
-When used, additional check if repo not yet exists is done, and adding
-only if it doesn't exist. Also zypper ref is run only on this repository.
-NOTE: if not used, $url must be a URI pointing to a .repo file.
-
-C<$no_gpg_check> pass --no-gpgcheck for repos with not valid GPG key, optional
-
-C<$priority> set repo priority, optional
-
-C<$params> other ar subcommand parameters, optional
-
-Examples:
-
- zypper_ar('http://dist.nue.suse.com/ibs/QA:/Head/SLE-15-SP1', name => 'qa-head);
- zypper_ar('https://download.opensuse.org/repositories/devel:/kubic/openSUSE_Tumbleweed/devel:kubic.repo', no_gpg_check => 1, priority => 90);
-
+Works exactly like zypper_ar on console
 =cut
 sub zypper_ar {
-    my ($url, %args) = @_;
-    my $name         = $args{name}         // '';
-    my $priority     = $args{priority}     // undef;
-    my $params       = $args{params}       // '';
-    my $no_gpg_check = $args{no_gpg_check} // '';
+    my ($url, $name) = @_;
 
-    $no_gpg_check = $no_gpg_check ? "--no-gpgcheck" : "";
-    my $prioarg = defined($priority) && !is_sle('<=12') ? "-p $priority" : "";
-    my $cmd_ar  = "--gpg-auto-import-keys ar -f $prioarg $no_gpg_check $params $url";
-    my $cmd_mr  = "mr -p $priority $url";
-    my $cmd_ref = "--gpg-auto-import-keys ref";
-
-    # repo file
-    if (!$name) {
-        zypper_call($cmd_ar);
-        zypper_call($cmd_mr) if $priority && is_sle('<12');
-        return zypper_call($cmd_ref);
-    }
-
-    # URI alias
-    my $out = script_output("LC_ALL=C zypper lr $name 2>&1", proceed_on_failure => 1);
-    if ($out =~ /Repository.*$name.*not found/i) {
-        zypper_call("$cmd_ar $name");
-        zypper_call($cmd_mr) if $priority && is_sle('<12');
-        return zypper_call("$cmd_ref --repo $name");
-    }
+    zypper_call("ar $url $name",                           dumb_term => 1);
+    zypper_call("--gpg-auto-import-keys ref --repo $name", dumb_term => 1);
 }
 
 =head2 fully_patch_system
 
- fully_patch_system();
-
-Run C<zypper patch> twice. The first run will update the package manager,
-the second run will update the system.
-
+TODO someone should document this
 =cut
 sub fully_patch_system {
     # first run, possible update of packager -- exit code 103
     zypper_call('patch --with-interactive -l', exitcode => [0, 102, 103], timeout => 3000);
-    # special handle for 11-SP4 s390 install
-    if (is_sle('=11-SP4') && check_var('ARCH', 's390x') && check_var('BACKEND', 's390x')) {
-        handle_patch_11sp4_zvm();
-    } else {
-        # second run, full system update
-        zypper_call('patch --with-interactive -l', exitcode => [0, 102], timeout => 6000);
-    }
+    # second run, full system update
+    zypper_call('patch --with-interactive -l', exitcode => [0, 102], timeout => 6000);
 }
 
 =head2 ssh_fully_patch_system
 
- ssh_fully_patch_system($host);
-
-Connect to the remote host C<$host> using ssh and update the system by
-running C<zypper patch> twice. The first run will update the package manager,
-the second run will update the system.
-
+TODO someone should document this
 =cut
 sub ssh_fully_patch_system {
     my $host = shift;
@@ -649,8 +504,6 @@ sub ssh_fully_patch_system {
 }
 
 =head2 minimal_patch_system
-
- minimal_patch_system([version_variable => $version_variable]);
 
 zypper doesn't offer --updatestack-only option before 12-SP1, use patch for sp0 to update packager
 =cut
@@ -665,42 +518,9 @@ sub minimal_patch_system {
     }
 }
 
-=head2 zypper_search
-
- zypper_search($search_params);
-
-Run zypper search with given command line arguments and parse the output into
-an array of hashes.
-
-=cut
-
-sub zypper_search {
-    my $params = shift;
-    my @fields = ('status', 'name', 'type', 'version', 'arch', 'repository');
-    my @ret;
-
-    my $output = script_output("zypper -n se $params");
-
-    for my $line (split /\n/, $output) {
-        my @tokens = split /\s*\|\s*/, $line;
-        next if $#tokens < $#fields;
-        my %tmp;
-
-        for (my $i = 0; $i < scalar @fields; $i++) {
-            $tmp{$fields[$i]} = $tokens[$i];
-        }
-
-        push @ret, \%tmp;
-    }
-
-    # Remove header from package list
-    shift @ret;
-    return \@ret;
-}
-
 =head2 workaround_type_encrypted_passphrase
 
- workaround_type_encrypted_passphrase();
+    workaround_type_encrypted_passphrase()
 
 Record soft-failure for unresolved feature fsc#320901 which we think is
 important and then unlock encrypted boot partitions if we expect it to be
@@ -709,7 +529,6 @@ boot partition within the encrypted LVM same as in test scenarios where we
 explicitly create an LVM including boot (C<FULL_LVM_ENCRYPT>). C<ppc64le> was
 already doing the same by default also in the case of pre-storage-ng but not
 anymore for storage-ng.
-
 =cut
 sub workaround_type_encrypted_passphrase {
     # nothing to do if the boot partition is not encrypted in FULL_LVM_ENCRYPT
@@ -720,22 +539,15 @@ sub workaround_type_encrypted_passphrase {
 
 =head2 is_boot_encrypted
 
- is_boot_encrypted();
-
-This will return C<1> if the env variables suggest
-that the boot partition is encrypted.
-
+TODO someone should document this
 =cut
 sub is_boot_encrypted {
     return 0 if get_var('UNENCRYPTED_BOOT');
     return 0 if !get_var('ENCRYPT') && !get_var('FULL_LVM_ENCRYPT');
     # for Leap 42.3 and SLE 12 codestream the boot partition is not encrypted
-    # Only aarch64 needs separate handling, it has unencrypted boot for fresh
-    # installations, but has encrypted boot if cancel activation of existing
-    # encrypted partitions
+    # Only aarch64 needs separate handling
     # ppc64le on pre-storage-ng boot was part of encrypted LVM
-    return 0 if !get_var('FULL_LVM_ENCRYPT') && !is_storage_ng && !is_ppc64le()
-      && !(get_var('ENCRYPT_CANCEL_EXISTING') && get_var('ENCRYPT') && is_aarch64());
+    return 0 if !get_var('FULL_LVM_ENCRYPT') && !is_storage_ng && !get_var('OFW');
     # SLES 15: we don't have scenarios for cryptlvm which boot partion is unencrypted.
     return 0 if is_sle('15+') && !get_var('ENCRYPT');
     # If the encrypted disk is "just activated" it does not mean that the
@@ -747,10 +559,7 @@ sub is_boot_encrypted {
 
 =head2 is_bridged_networking
 
- is_bridged_networking();
-
-returns C<BRIDGED_NETWORKING>.
-
+returns BRIDGED_NETWORKING
 =cut
 sub is_bridged_networking {
     return get_var('BRIDGED_NETWORKING');
@@ -758,10 +567,7 @@ sub is_bridged_networking {
 
 =head2 set_bridged_networking
 
- set_bridged_networking();
-
-Sets C<BRIDGED_NETWORKING> to C<1> if applicable.
-
+sets BRIDGED_NETWORKING if applicable
 =cut
 sub set_bridged_networking {
     my $ret = 0;
@@ -775,25 +581,24 @@ sub set_bridged_networking {
 
 =head2 set_hostname
 
- set_hostname($hostname);
+set_hostname($hostname);
 
 Setting hostname according input parameter using hostnamectl.
 Calling I<reload-or-restart> to make sure that network stack will propogate
-hostname into DHCP/DNS.
+hostname into DHCP/DNS
 
-If you change hostname using C<hostnamectl set-hostname>, then C<hostname -f>
+if you change hostname using C<hostnamectl set-hostname>, then C<hostname -f>
 will fail with I<hostname: Name or service not known> also DHCP/DNS don't know
 about the changed hostname, you need to send a new DHCP request to update
 dynamic DNS yast2-network module does
 C<NetworkService.ReloadOrRestart if Stage.normal || !Linuxrc.usessh>
-if hostname is changed via C<yast2 lan>.
-
+if hostname is changed via C<yast2 lan>
 =cut
 sub set_hostname {
     my ($hostname) = @_;
     assert_script_run "hostnamectl set-hostname $hostname";
     assert_script_run "hostnamectl status|grep $hostname";
-    assert_script_run "uname -n|grep $hostname";
+    assert_script_run "hostname|grep $hostname";
     systemctl 'status network.service';
     save_screenshot;
     assert_script_run "if systemctl -q is-active network.service; then systemctl reload-or-restart network.service; fi";
@@ -801,13 +606,7 @@ sub set_hostname {
 
 =head2 assert_and_click_until_screen_change
 
- assert_and_click_until_screen_change($mustmatch [, $wait_change [, $repeat ]]);
-
-This will repeat C<assert_and_click($mustmatch)> up to C<$repeat> times, trying
-againg if the screen has not changed within C<$wait_change> seconds after
-the C<assert_and_click>. Returns the number of attempts made.
-C<$wait_change> defaults to 2 (seconds) and C<$repeat> defaults to 3.
-
+TODO someone should document this
 =cut
 sub assert_and_click_until_screen_change {
     my ($mustmatch, $wait_change, $repeat) = @_;
@@ -815,8 +614,6 @@ sub assert_and_click_until_screen_change {
     $repeat      //= 3;
     my $i = 0;
 
-    # This is not totally race free - wait_screen_change may timeout, then the screen
-    # changes and the next assert_and_click will fail.
     for (; $i < $repeat; $i++) {
         my $changed = wait_screen_change(sub { assert_and_click $mustmatch }, $wait_change);
         last if $changed;
@@ -827,11 +624,8 @@ sub assert_and_click_until_screen_change {
 
 =head2 handle_livecd_reboot_failure
 
- handle_livecd_reboot_failure();
-
 Handle a potential failure on a live CD related to boo#993885 that the reboot
 action from a desktop session does not work and we are stuck on the desktop.
-
 =cut
 sub handle_livecd_reboot_failure {
     mouse_hide;
@@ -847,21 +641,18 @@ sub handle_livecd_reboot_failure {
 
 =head2 assert_screen_with_soft_timeout
 
- assert_screen_with_soft_timeout($mustmatch, bugref => $bugref [,timeout => $timeout] [,soft_timeout => $soft_timeout] [,soft_failure_reason => $soft_failure_reason]);
+  assert_screen_with_soft_timeout($mustmatch [,timeout => $timeout] [, bugref => $bugref] [,soft_timeout => $soft_timeout] [,soft_failure_reason => $soft_failure_reason]);
 
 Extending assert_screen with a soft timeout. When C<$soft_timeout> is hit, a
 soft failure is recorded with the message C<$soft_failure_reason> but
-C<assert_screen> continues until the (hard) timeout C<$timeout> is hit. This
+assert_screen continues until the (hard) timeout C<$timeout> is hit. This
 makes sense when an assert screen should find a screen within a lower time but
 still should not fail and continue until the hard timeout, e.g. to discover
 performance issues.
 
-There MUST be a C<$bugref> set for the softfail.
-If it is not set this function will die.
-
 Example:
 
- assert_screen_with_soft_timeout('registration-found', timeout => 300, soft_timeout => 60, bugref => 'bsc#123456');
+  assert_screen_with_soft_timeout('registration-found', timeout => 300, soft_timeout => 60, bugref => 'bsc#123456');
 
 =cut
 sub assert_screen_with_soft_timeout {
@@ -870,7 +661,6 @@ sub assert_screen_with_soft_timeout {
     $args{timeout}      //= 30;
     $args{soft_timeout} //= 0;
     my $needle_info = ref($mustmatch) eq "ARRAY" ? join(',', @$mustmatch) : $mustmatch;
-    die("\$args{bugref} is not set in assert_screen_with_soft_timeout") unless ($args{bugref});
     $args{soft_failure_reason} //= "$args{bugref}: needle(s) $needle_info not found within $args{soft_timeout}";
     if ($args{soft_timeout}) {
         die "soft timeout has to be smaller than timeout" unless ($args{soft_timeout} < $args{timeout});
@@ -883,19 +673,13 @@ sub assert_screen_with_soft_timeout {
 
 =head2 pkcon_quit
 
- pkcon_quit();
-
-Stop and mask packagekit service and wait until it is really dead.
-This is needed to prevent access conflicts to the RPM database.
-
+TODO someone should document this
 =cut
 sub pkcon_quit {
     script_run("systemctl mask packagekit; systemctl stop packagekit; while pgrep packagekitd; do sleep 1; done");
 }
 
 =head2 addon_decline_license
-
- addon_decline_license();
 
 TODO someone should document this
 =cut
@@ -916,8 +700,6 @@ sub addon_decline_license {
 }
 
 =head2 addon_license
-
- addon_license($addon);
 
 TODO someone should document this
 =cut
@@ -952,10 +734,7 @@ sub addon_license {
 
 =head2 addon_products_is_applicable
 
- addon_products_is_applicable();
-
-Return C<1> if C<ADDONURL> is set and C<LIVECD> is unset.
-
+TODO some should document this
 =cut
 sub addon_products_is_applicable {
     return !get_var('LIVECD') && get_var('ADDONURL');
@@ -963,10 +742,7 @@ sub addon_products_is_applicable {
 
 =head2 noupdatestep_is_applicable
 
- noupdatestep_is_applicable();
-
-Return C<1> if neither C<UPGRADE> nor C<LIVE_UPGRADE> is set.
-
+TODO someone should document this
 =cut
 sub noupdatestep_is_applicable {
     return !get_var("UPGRADE") && !get_var("LIVE_UPGRADE");
@@ -974,11 +750,7 @@ sub noupdatestep_is_applicable {
 
 =head2 installwithaddonrepos_is_applicable
 
- installwithaddonrepos_is_applicable();
-
-Return C<1> if installation should be done with addon repos
-based on ENV variables.
-
+TODO someone should document this
 =cut
 sub installwithaddonrepos_is_applicable {
     return get_var("HAVE_ADDON_REPOS") && !get_var("UPGRADE") && !get_var("NET");
@@ -986,11 +758,7 @@ sub installwithaddonrepos_is_applicable {
 
 =head2 random_string
 
- random_string($length);
-
-Returns a random string with length C<$length> (default: 4)
-containing alphanumerical characters.
-
+returns a random string
 =cut
 sub random_string {
     my ($self, $length) = @_;
@@ -1001,11 +769,7 @@ sub random_string {
 
 =head2 handle_emergency
 
- handle_emergency();
-
-Handle emergency shell or (systemd) emergency mode and dump
-some basic logging information to the serial output.
-
+Handle emergency mode
 =cut
 sub handle_emergency {
     if (match_has_tag('emergency-shell')) {
@@ -1016,21 +780,21 @@ sub handle_emergency {
     elsif (match_has_tag('emergency-mode')) {
         type_password;
         send_key 'ret';
-        script_run "journalctl --no-pager -o short-precise > /dev/$serialdev";
+        script_run "journalctl --no-pager > /dev/$serialdev";
         die "hit emergency mode";
     }
 }
 
 =head2 service_action
 
- service_action($service_name [, {type => ['$unit_type', ...] [,action => ['$service_action', ...]]}]);
+  service_action($service_name [, {type => ['$unit_type', ...] [,action => ['$service_action', ...]]}]);
 
 Control systemd services. C<type> may be set to service, socket, ... and C<$action>
 to start, stop, ... Default action is to 'stop' $service_name.service unit file.
 
 Example:
 
- service_action('dbus', {type => ['socket', 'service'], action => ['unmask', 'start']});
+  service_action('dbus', {type => ['socket', 'service'], action => ['unmask', 'start']});
 
 =cut
 sub service_action {
@@ -1046,15 +810,53 @@ sub service_action {
     }
 }
 
-=head2 get_root_console_tty
+=head2 run_scripted_command_slow
 
- get_root_console_tty();
+    run_scripted_command_slow($cmd [, slow_type => <num>]);
+
+Type slowly to run very long command in scripted way to avoid issue of 'key event queue full' (see poo#12250).
+Pass optional slow_type key to control how slow to type the command.
+Scripted very long command to shorten typing length.
+Default slow_type is type_string_slow.
+=cut
+sub run_scripted_command_slow {
+    my ($cmd, %args) = @_;
+    my $suffix = hashed_string("SO$cmd");
+
+    open(my $fh, '>', 'current_script');
+    print $fh $cmd;
+    close $fh;
+
+    my $slow_type   = $args{slow_type} // 1;
+    my $curl_script = "curl -f -v " . autoinst_url("/current_script") . " > /tmp/script$suffix.sh" . " ; echo curl-\$? > /dev/$testapi::serialdev\n";
+    my $exec_script = "/bin/bash -x /tmp/script$suffix.sh" . " ; echo script$suffix-\$? > /dev/$testapi::serialdev\n";
+    if ($slow_type == 1) {
+        type_string_slow $curl_script;
+        wait_serial "curl-0" || die "Command $curl_script died";
+        type_string_slow $exec_script;
+        wait_serial "script$suffix-0" || die "Command $exec_script died";
+    }
+    elsif ($slow_type == 2) {
+        type_string_very_slow $curl_script;
+        wait_serial "curl-0" || die "Command $curl_script died";
+        type_string_very_slow $exec_script;
+        wait_serial "script$suffix-0" || die "Command $exec_script died";
+    }
+    elsif ($slow_type == 3) {
+        type_string $curl_script, wait_screen_change => 1;
+        wait_serial "curl-0" || die "Command $curl_script died";
+        type_string $exec_script, wait_screen_change => 1;
+        wait_serial "script$suffix-0" || die "Command $exec_script died";
+    }
+    clear_console;
+}
+
+=head2 get_root_console_tty
 
 Returns tty number used designed to be used for root-console.
 When console is not yet initialized, we cannot get it from arguments.
 Since SLE 15 gdm is running on tty2, so we change behaviour for it and
 openSUSE distris, except for Xen PV (bsc#1086243).
-
 =cut
 sub get_root_console_tty {
     return (!is_sle('<15') && !is_caasp && !check_var('VIRSH_VMM_TYPE', 'linux')) ? 6 : 2;
@@ -1062,13 +864,10 @@ sub get_root_console_tty {
 
 =head2 get_x11_console_tty
 
- get_x11_console_tty();
-
 Returns tty number used designed to be used for X.
 Since SLE 15 gdm is always running on tty7, currently the main GUI session
 is running on tty2 by default, except for Xen PV and Hyper-V (bsc#1086243).
 See also: bsc#1054782
-
 =cut
 sub get_x11_console_tty {
     my $new_gdm
@@ -1078,20 +877,10 @@ sub get_x11_console_tty {
       && !check_var('VIRSH_VMM_FAMILY', 'hyperv')
       && !check_var('VIRSH_VMM_TYPE',   'linux')
       && !get_var('VERSION_LAYERED');
-    # $newer_gdm means GDM version >= 3.32, which will start gnome desktop
-    # on tty2 including auto-login cases. Also exclude cases which boot from
-    # older versions in HDD
-    my $newer_gdm
-      = $new_gdm
-      && !is_sle('<15-SP2')
-      && !is_leap('<15.2')
-      && get_var('HDD_1', '') !~ /opensuse-42/;
-    return (check_var('DESKTOP', 'gnome') && (get_var('NOAUTOLOGIN') || $newer_gdm) && $new_gdm) ? 2 : 7;
+    return (check_var('DESKTOP', 'gnome') && get_var('NOAUTOLOGIN') && $new_gdm) ? 2 : 7;
 }
 
-=head2 arrays_differ
-
- arrays_differ(\@array1, \@array2);
+=head2  arrays_differ
 
 Comparing two arrays passed by reference. Return 1 if arrays has symmetric difference
 and 0 otherwise.
@@ -1109,7 +898,7 @@ sub arrays_differ {
 
 =head2 arrays_subset
 
- arrays_subset(\@array1, \@array2);
+    arrays_subset(\@array1, \@array2);
 
 Compares two arrays passed by reference to identify if array1 is a subset of
 array2.
@@ -1117,7 +906,6 @@ array2.
 Returns resulting array containing items of array1 that do not exist in array2.
 If all the items of array1 exist in array2, returns an empty array (which means
 array1 is a subset of array2).
-
 =cut
 sub arrays_subset {
     my ($array1_ref, $array2_ref) = @_;
@@ -1130,12 +918,9 @@ sub arrays_subset {
 
 =head2 ensure_serialdev_permissions
 
- ensure_serialdev_permissions();
-
 Grant user permission to access serial port immediately as well as persisting
 over reboots. Used to ensure that testapi calls like script_run work for the
 test user as well as root.
-
 =cut
 sub ensure_serialdev_permissions {
     my ($self) = @_;
@@ -1148,49 +933,41 @@ sub ensure_serialdev_permissions {
         assert_script_run "chown $username /dev/$serialdev";
     }
     else {
-        # when serial getty is started, it changes the group of serialdev from dialout to tty (but doesn't change it back when stopped)
-        # let's make sure that both will work
-        assert_script_run "chown $testapi::username /dev/$testapi::serialdev && usermod -a -G tty,dialout,\$(stat -c %G /dev/$testapi::serialdev) $testapi::username";
+        assert_script_run "chown $testapi::username /dev/$testapi::serialdev && gpasswd -a $testapi::username \$(stat -c %G /dev/$testapi::serialdev)";
     }
 }
 
 =head2 disable_serial_getty
 
- disable_serial_getty();
-
-Serial getty service pollutes serial output with login prompt, which
-interferes with the output, e.g. when calling C<script_output>.
+Serial getty service pollutes serial output with login propmt, which
+interferes with the output, e.g. when calling script_output.
 Login prompt messages on serial are used on some remote backend to
-identify that system has been booted, so do not mask on non-qemu backends.
-This is only necessary for Linux < 4.20.4 so skipped on more recent versions.
-
+identify that system has been booted, so do not mask on non-qemu backends
 =cut
 sub disable_serial_getty {
     my ($self) = @_;
     my $service_name = "serial-getty\@$testapi::serialdev";
     # Do not run on zVM as running agetty is required by iucvconn in order to work
     return if check_var('BACKEND', 's390x');
-    # No need to apply on more recent kernels
-    return unless is_sle('<=15-SP2') || is_leap('<=15.2');
     # Stop serial-getty on serial console to avoid serial output pollution with login prompt
     # Doing early due to bsc#1103199 and bsc#1112109
+    # Return if already disabled
+    return if script_run "systemctl is-enabled $service_name";
+    systemctl "stop $service_name",    ignore_failure => 1;
+    systemctl "disable $service_name", ignore_failure => 1;
+    record_info 'serial-getty', "Serial getty disabled for $testapi::serialdev";
     # Mask if is qemu backend as use serial in remote installations e.g. during reboot
-    my $mask = check_var('BACKEND', 'qemu');
-    my $cmd  = $mask ? 'mask' : 'disable';
-    disable_and_stop_service($service_name, mask_service => $mask, ignore_failure => 1);
-    record_info 'serial-getty', "Serial getty $cmd for $testapi::serialdev";
+    systemctl "mask $service_name", ignore_failure => 1 if check_var('BACKEND', 'qemu');
+    record_info 'serial-getty', "Serial getty mask for $testapi::serialdev";
 }
 
 =head2 exec_and_insert_password
 
- exec_and_insert_password($cmd);
+    exec_and_insert_password($cmd);
 
-1. Execute a command (C<$cmd>) that ask for a password
-
-2. Detects password prompt
-
-3. Insert password and hits enter
-
+ 1. Execute a command that ask for a password
+ 2. Detects password prompt
+ 3. Insert password and hits enter
 =cut
 sub exec_and_insert_password {
     my ($cmd) = @_;
@@ -1207,12 +984,7 @@ sub exec_and_insert_password {
         send_key 'ret';
         assert_screen('password-prompt', 60);
     }
-    if (get_var("VIRT_PRJ1_GUEST_INSTALL")) {
-        type_password("novell");
-    }
-    else {
-        type_password;
-    }
+    type_password;
     send_key "ret";
 
     if (is_serial_terminal()) {
@@ -1225,13 +997,8 @@ sub exec_and_insert_password {
 
 =head2 shorten_url
 
- shorten_url($url, [wishid => $wishid]);
-
 Shorten url via schort(s.qa.suse.de)
-This is mainly used for autoyast url shorten to avoid limit of x3270 xedit.
-
-C<$url> is the url to short. C<$wishid> is the prefered short url id.
-
+This is mainly used for autoyast url shorten to avoid limit of x3270 xedit
 =cut
 sub shorten_url {
     my ($url, %args) = @_;
@@ -1251,12 +1018,9 @@ sub shorten_url {
 }
 
 
-=head2 _handle_login_not_found
+=head2 _handle_lofin_not_found
 
- _handle_login_not_found($str);
-
-Internal helper function used by C<reconnect_mgmt_console>.
-
+TODO someone should document this
 =cut
 sub _handle_login_not_found {
     my ($str) = @_;
@@ -1288,21 +1052,14 @@ sub _handle_login_not_found {
 
 =head2 reconnect_mgmt_console
 
- reconnect_mgmt_console([timeout => $timeout]);
-
-After each reboot we have to reconnect to the management console on remote backends.
-C<$timeout> can be set to some specific time and if during reboot GRUB is shown twice C<grub_expected_twice>
-can be set to 1.
-
+After each reboot we have to reconnect to the management console on remote backends
 =cut
 sub reconnect_mgmt_console {
     my (%args) = @_;
-    $args{timeout}             //= 300;
-    $args{grub_expected_twice} //= 0;
+    $args{timeout} //= 300;
 
     if (check_var('ARCH', 's390x')) {
-        my $login_ready = qr/Welcome to /;
-        $login_ready .= is_sle() ? qr/SUSE Linux Enterprise Server.*\(s390x\)/ : qr/openSUSE Tumbleweed/;
+        my $login_ready = qr/Welcome to SUSE Linux Enterprise Server.*\(s390x\)/;
         console('installation')->disable_vnc_stalls;
 
         # different behaviour for z/VM and z/KVM
@@ -1327,35 +1084,22 @@ sub reconnect_mgmt_console {
                 wait_serial($login_ready) || diag 'Could not find GRUB screen, continuing nevertheless, trying to boot';
             }
             else {
+                wait_serial('GNU GRUB') || diag 'Could not find GRUB screen, continuing nevertheless, trying to boot';
                 select_console('svirt');
                 save_svirt_pty;
-                if ($args{grub_expected_twice}) {
-                    wait_serial('Press enter to boot the selected OS') ||
-                      diag 'Could not find boot selection, continuing nevertheless, trying to boot';
-                    type_line_svirt '';
-                }
-                wait_serial('GNU GRUB') ||
-                  diag 'Could not find GRUB screen, continuing nevertheless, trying to boot';
                 type_line_svirt '', expect => $login_ready, timeout => $args{timeout}, fail_message => 'Could not find login prompt';
             }
         }
 
-        if (!check_var('DESKTOP', 'textmode')) {
-            if (check_var("UPGRADE", "1") && is_sle('15+') && is_sle('<15', get_var('HDDVERSION'))) {
-                select_console 'root-console';
-                if (script_run("iptables -S | grep 'A input_ext.*tcp.*dport 59.*-j ACCEPT'", 30) != 0) {
-                    record_soft_failure('bsc#1154156 - After upgrade from 12SP5, SuSEfirewall2 blocks xvnc.socket on s390x');
-                    script_run 'iptables -I input_ext -p tcp -m tcp --dport 5900:5999 -j ACCEPT';
-                }
-            }
+        # SLE >= 15 does not offer auto-started VNC server in SUT, only login prompt as in textmode
+        if (!check_var('DESKTOP', 'textmode') && is_sle('<15')) {
             select_console('x11', await_console => 0);
         }
     }
     elsif (check_var('ARCH', 'ppc64le')) {
         if (check_var('BACKEND', 'spvm')) {
-            select_console 'novalink-ssh', await_console => 0;
-        } elsif (check_var('BACKEND', 'pvm_hmc')) {
-            select_console 'powerhmc-ssh', await_console => 0;
+            select_console 'novalink-ssh';
+            type_string " mkvterm --id " . get_required_var('NOVALINK_LPAR_ID') . "\n";
         }
     }
     elsif (check_var('ARCH', 'x86_64')) {
@@ -1373,68 +1117,68 @@ sub reconnect_mgmt_console {
 
 =head2 show_tasks_in_blocked_state
 
- show_tasks_in_blocked_state();
-
-Dumps tasks that are in uninterruptable (blocked) state and wait for headline
-of dump.
-
-See L<https://github.com/torvalds/linux/blob/master/Documentation/admin-guide/sysrq.rst>.
-
+TODO someone should document this
 =cut
 sub show_tasks_in_blocked_state {
     # sending sysrqs doesn't work for svirt
     if (!check_var('BACKEND', 'svirt')) {
         send_key 'alt-sysrq-w';
         # info will be sent to serial tty
-        wait_serial(qr/sysrq\s*:\s+show\s+blocked\s+state/i, 1);
-        send_key 'ret';    # ensure clean shell prompt
+        wait_serial('SysRq : Show Blocked State', 1);
     }
 }
 
 =head2 svirt_host_basedir
 
- svirt_host_basedir();
-
-Return C<VIRSH_OPENQA_BASEDIR> or fall back to C</var/lib>.
-
+TODO someone should document this
 =cut
 sub svirt_host_basedir {
     return get_var('VIRSH_OPENQA_BASEDIR', '/var/lib');
 }
 
+=head2 prepare_ssh_localhost_key_login
+
+TODO someone should document this
+=cut
+sub prepare_ssh_localhost_key_login {
+    my ($source_user) = @_;
+    # in case localhost is already inside known_hosts
+    if (script_run('test -e ~/.ssh/known_hosts') == 0) {
+        assert_script_run('ssh-keygen -R localhost');
+    }
+
+    # generate ssh key
+    if (script_run('! test -e ~/.ssh/id_rsa') == 0) {
+        assert_script_run('ssh-keygen -t rsa -N "" -f ~/.ssh/id_rsa');
+    }
+
+    # add key to authorized_keys of root
+    if ($source_user eq 'root') {
+        assert_script_run('cat ~/.ssh/id_rsa.pub | tee -a ~/.ssh/authorized_keys');
+    }
+    else {
+        assert_script_sudo('mkdir -p /root/.ssh');
+        assert_script_sudo("cat /home/$source_user/.ssh/id_rsa.pub | tee -a /root/.ssh/authorized_keys");
+    }
+}
+
 =head2 script_retry
 
- script_retry($cmd, [expect => $expect], [retry => $retry], [delay => $delay], [timeout => $timeout], [die => $die]);
-
-Repeat command until expected result or timeout.
-
-C<$expect> refers to the expected command exit code and defaults to C<0>.
-
-C<$retry> refers to the number of retries and defaults to C<10>.
-
-C<$delay> is the time between retries and defaults to C<30>.
-
-The command must return within C<$timeout> seconds (default: 25).
-
-If the command doesn't return C<$expect> after C<$retry> retries,
-this function will die, if C<$die> is set.
-
-Example:
-
- script_retry('ping -c1 -W1 machine', retry => 5);
-
+Repeat command until expected result or timeout
+script_retry 'ping -c1 -W1 machine', retry => 5
 =cut
 sub script_retry {
     my ($cmd, %args) = @_;
-    my $ecode   = $args{expect}  // 0;
-    my $retry   = $args{retry}   // 10;
-    my $delay   = $args{delay}   // 30;
-    my $timeout = $args{timeout} // 30;
-    my $die     = $args{die}     // 1;
+    my $ecode = $args{expect} // 0;
+    my $retry = $args{retry}  // 10;
+    my $delay = $args{delay}  // 30;
+    my $die   = $args{die}    // 1;
 
     my $ret;
     for (1 .. $retry) {
-        $ret = script_run "timeout " . ($timeout - 3) . " $cmd", $timeout;
+        type_string "# Trying $_ of $retry:\n";
+
+        $ret = script_run "timeout 25 $cmd";
         last if defined($ret) && $ret == $ecode;
 
         die("Waiting for Godot: $cmd") if $retry == $_ && $die == 1;
@@ -1446,10 +1190,10 @@ sub script_retry {
 
 =head2 script_run_interactive
 
- script_run_interactive($cmd, $prompt, $timeout);
+    script_run_interactive($cmd, $prompt, $timeout);
 
 For interactive command, input strings or keys according to the prompt message
-in the run time. Pass arrayref C<$prompt> which contains the prompt message to
+in the run time. Pass arrayref $prompt which contains the prompt message to
 be matched (regex) and the answer with string or key to be typed. for example:
 
     [{
@@ -1464,7 +1208,7 @@ be matched (regex) and the answer with string or key to be typed. for example:
 A "EOS~~~" message followed by return value will be printed as a mark
 for the end of interaction after the command finished running.
 
-If the first argument is C<undef>, only the sencond part will be processed - to
+If the first argument is undef, only the sencond part will be processed - to
 match output and react. If the second argument is undef, the first part will
 be processed - to run the command without interaction with terminal output.
 This is useful for some situation when you want to do more between inputing
@@ -1521,46 +1265,32 @@ sub script_run_interactive {
 
 =head2 create_btrfs_subvolume
 
- create_btrfs_subvolume();
-
-Create btrfs subvolume for C</boot/grub2/arm64-efi> before migration.
+create btrfs subvolume for /boot/grub2/arm64-efi before migration.
 ref:bsc#1122591
-
 =cut
 sub create_btrfs_subvolume {
-    my $fstype;
-    $fstype = script_output("df -PT /boot/grub2/arm64-efi/ | grep -v \"Filesystem\" | awk '{print \$2}'");
-    return if ('btrfs' ne chomp($fstype));
-    my @sub_list = split(/\n/, script_output("btrfs subvolume list /boot/grub2/arm64-efi/", 120));
-    foreach my $line (@sub_list) {
-        return if ($line =~ /\/boot\/grub2\/arm64-efi/);
-    }
     record_soft_failure 'bsc#1122591 - Create subvolume for aarch64 to make snapper rollback works';
-    assert_script_run("mkdir -p /tmp/arm64-efi/");
-    assert_script_run("cp -r /boot/grub2/arm64-efi/* /tmp/arm64-efi/");
-    assert_script_run("rm -fr /boot/grub2/arm64-efi");
+    assert_script_run("mv /boot/grub2/arm64-efi /boot/grub2/arm64-efi.bk");
     assert_script_run("btrfs subvolume create /boot/grub2/arm64-efi");
-    assert_script_run("cp -r /tmp/arm64-efi/* /boot/grub2/arm64-efi/");
-    assert_script_run("rm -fr /tmp/arm64-efi/");
+    assert_script_run("cp -r /boot/grub2/arm64-efi.bk/* /boot/grub2/arm64-efi/");
+    assert_script_run("rm -fr /boot/grub2/arm64-efi.bk");
 }
 
 
 =head2 file_content_replace
 
- file_content_replace("filename",
-       regex_to_find => text_to_replace,
-       '--sed-modifier' => 'g',
-       'another^&&*(textToFind' => "replacement")
+  file_content_replace("filename",
+        regex_to_find => text_to_replace,
+        '--sed-modifier' => 'g',
+        'another^&&*(textToFind' => "replacement")
 
-Generify sed usage as config file modification tool.
-allow to modify several items in one function call
-by providing  C<regex_to_find> / C<text_to_replace> as hash key/value pairs
+  generify sed usage as config file modification tool.
+  allow to modify several items in one function call
+  by providing  regex_to_find / text_to_replace as hash key/value pairs
 
-Special key C<--sed-modifier> allowing to add modifiers to expression.
-
-Special key C<--debug> allow to output full file content into serial.
-Disabled by default.
-
+  special key '--sed-modifier' allowing to add modifiers to expression
+  special key '--debug' allow to output full file content into serial. Disabled
+  by default
 =cut
 sub file_content_replace {
     my ($filename, %to_replace) = @_;
@@ -1577,83 +1307,6 @@ sub file_content_replace {
         assert_script_run(sprintf("sed -E 's/%s/%s/%s' -i %s", $key, $value, $sed_modifier, $filename));
     }
     script_run("cat $filename") if $debug;
-}
-
-sub handle_patch_11sp4_zvm {
-    my $zypper_patch_conflict     = qr/^Choose from above solutions by number[\s\S,]* \[1/m;
-    my $zypper_continue           = qr/^Continue\? \[y/m;
-    my $zypper_patch_done         = qr/^ZYPPER-DONE/m;
-    my $zypper_patch_notification = qr/^View the notifications now\? \[y/m;
-    my $zypper_error              = qr/^Abort, retry, ignore\? \[a/m;
-    my $timeout                   = 6000;
-    my $patch_checks              = [
-        $zypper_patch_conflict, $zypper_continue, $zypper_patch_done, $zypper_patch_notification, $zypper_error
-    ];
-    script_run("(zypper patch --with-interactive -l;echo ZYPPER-DONE) | tee /dev/$serialdev", 0);
-    my $out = wait_serial($patch_checks, $timeout);
-    while ($out) {
-        if ($out =~ $zypper_patch_conflict) {
-            save_screenshot;
-            if (check_var("BREAK_DEPS", '1')) {
-                send_key "3";
-                send_key "ret";
-            }
-            elsif (check_var("WORKAROUND_DEPS", '1')) {
-                send_key "2";
-                send_key "ret";
-            }
-            else {
-                die 'Dependency problems';
-            }
-        }
-        elsif ($out =~ $zypper_continue) {
-            save_screenshot;
-            send_key "y";
-            send_key "ret";
-        }
-        elsif ($out =~ $zypper_patch_notification) {
-            save_screenshot;
-            send_key "n";
-            send_key "ret";
-        }
-        elsif ($out =~ $zypper_patch_done) {
-            save_screenshot;
-            last;
-        }
-        elsif ($out =~ $zypper_error) {
-            die "zypper patch error";
-            save_screenshot;
-        }
-        $out = wait_serial($patch_checks, $timeout);
-    }
-}
-
-=head2 assert_file_content
-    assert_file_content( "path", value );
-
-It could check a file be point to 'path' whether include 'value'.
-
-=cut
-
-sub assert_file_content {
-    my ($param, $value) = @_;
-    assert_script_run("cat $param | grep $value");
-}
-
-=head2 ensure_ca_certificates_suse_installed
-    ensure_ca_certificates_suse_installed();
-
-This functions checks if ca-certificates-suse is installed and if it is not it adds the repository and installs it.
-
-=cut
-
-sub ensure_ca_certificates_suse_installed {
-    return unless is_sle;
-    if (script_run('rpm -qi ca-certificates-suse') == 1) {
-        my $distversion = get_required_var("VERSION") =~ s/-SP/_SP/r;    # 15 -> 15, 15-SP1 -> 15_SP1
-        zypper_call("ar --refresh http://download.suse.de/ibs/SUSE:/CA/SLE_$distversion/SUSE:CA.repo");
-        zypper_call("in ca-certificates-suse");
-    }
 }
 
 1;

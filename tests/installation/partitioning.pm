@@ -9,35 +9,21 @@
 # without any warranty.
 
 # Summary: Check initial partitioning screen and prepare optional substeps
-# - If DUALBOOT is set, keep windows partition by resizing it
-# - If system uses storage NG or opensuse, add changed shortcuts
 # Maintainer: Joachim Rauch <jrauch@suse.com>
 
-use base 'y2_installbase';
 use strict;
 use warnings;
+use base "y2logsstep";
 use testapi;
 use version_utils qw(is_leap is_storage_ng is_sle is_tumbleweed);
 use partition_setup qw(%partition_roles is_storage_ng_newui);
 
 sub run {
     assert_screen 'partitioning-edit-proposal-button', 40;
-    if (check_var('PARTITION_EDIT', 'ext4_btrfs')) {
-        send_key 'alt-g';
-        send_key 'alt-n';
-        send_key 'down';
-        send_key 'alt-f';
-        type_string 'ext4';
-        send_key 'alt-i';
-        send_key 'b';
-        assert_screen 'partitioning-ext4_root-btrfs_home';
-        send_key 'alt-n';
-    }
 
     if (get_var("DUALBOOT")) {
         if (is_sle('15+')) {
-            # Based on comment from Dev in bsc#1089723, 50GB disk is not a real-world use case for dual boot
-            # We use 50GB for dual-boot openQA testing in order to save space
+            record_soft_failure('bsc#1089723 Make sure keep the existing windows partition');
             assert_screen "delete-partition";
             send_key "alt-g";
             assert_and_click "resize-or-remove-ifneeded";

@@ -18,7 +18,7 @@
 
 use strict;
 use warnings;
-use base "y2_module_consoletest";
+use base "console_yasttest";
 use testapi;
 use registration;
 

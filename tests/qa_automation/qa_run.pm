@@ -17,13 +17,12 @@ use warnings;
 use File::Basename;
 use base "opensusebasetest";
 use registration 'add_suseconnect_product';
-use repo_tools qw(add_qa_head_repo add_qa_web_repo);
 use testapi qw(is_serial_terminal :DEFAULT);
 use utils;
 use version_utils 'is_sle';
 
 sub test_run_list {
-    return ('_reboot_off', @{get_var_array('QA_TESTSUITE', get_var('QA_TESTSET', '') =~ s/[^_]*_//r)});
+    return ('_reboot_off', get_var('QA_TESTSUITE', get_var('QA_TESTSET', '') =~ s/[^_]*_//r));
 }
 
 sub system_status {
@@ -37,7 +36,7 @@ sub system_status {
         iptables   => "iptables -L -n --line-numbers",
         repos      => "zypper repos -u",
         dmesg      => "dmesg",
-        journalctl => "journalctl -xn 100 -o short-precise"
+        journalctl => "journalctl -xn 100"
     );
     foreach my $key (@klst) {
         my $cmd = "echo '=========> $key <=========' >> $log; ";
@@ -74,15 +73,23 @@ sub prepare_repos {
     if ($qa_server_repo) {
         # Remove all existing repos and add QA_SERVER_REPO
         script_run('for ((i = $(zypper lr| tail -n+5 |wc -l); i >= 1; i-- )); do zypper -n rr $i; done; unset i', 300);
-        zypper_call("--no-gpg-checks ar -f '$qa_server_repo' server-repo");
+        zypper_call("--no-gpg-check ar -f '$qa_server_repo' server-repo");
         if ($qa_sdk_repo) {
-            zypper_call("--no-gpg-checks ar -f '$qa_sdk_repo' sle-sdk");
+            zypper_call("--no-gpg-check ar -f '$qa_sdk_repo' sle-sdk");
         }
     }
-
-    add_qa_head_repo;
-    add_qa_web_repo;
-    add_suseconnect_product('sle-module-python2') if is_sle('>15') && get_var('FLAVOR') !~ /-Updates$|-Incidents/;
+    my $qa_head_repo = get_var('QA_HEAD_REPO', '');
+    my $qa_web_repo  = get_var('QA_WEB_REPO',  '');
+    unless ($qa_head_repo) {
+        die "No QA_HEAD_REPO specified!";
+    }
+    zypper_call("--no-gpg-check ar -f '$qa_head_repo' qa-ibs");
+    if ($qa_web_repo) {
+        zypper_call("--no-gpg-check ar -f '$qa_web_repo' qa-web");
+    }
+    # sometimes updates.suse.com is busy, so we need to wait for possiblye retries
+    zypper_call("--gpg-auto-import-keys ref");
+    add_suseconnect_product('sle-module-python2') if is_sle('>15');
     zypper_call("in qa_testset_automation qa_tools python-base python-xml");
 }
 
@@ -130,7 +137,7 @@ sub run {
 
     # Upload test logs
     my $tarball = "/tmp/qaset.tar.bz2";
-    assert_script_run("tar cjf '$tarball' -C '/var/log/' 'qaset'", timeout => 300);
+    assert_script_run("tar cjf '$tarball' -C '/var/log/' 'qaset'");
     upload_logs($tarball, timeout => 600);
     my $log = $self->system_status();
     upload_logs($log, timeout => 100);

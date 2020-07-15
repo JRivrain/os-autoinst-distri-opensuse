@@ -8,7 +8,7 @@
 # without any warranty.
 
 # Summary: feature [ECO] zypper: more advanced $releasever handling
-# Maintainer: Lemon <leli@suse.com>
+# Maintainer: Qingming Su <qingming.su@suse.com>
 # Tags: tc#1480297, fate#318354
 
 use base "consoletest";

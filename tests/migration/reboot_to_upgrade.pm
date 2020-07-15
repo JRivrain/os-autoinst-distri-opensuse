@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright © 2018-2020 SUSE LLC
+# Copyright © 2018 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -11,7 +11,7 @@
 #       Just trigger reboot action, afterwards tests will be
 #       incepted by later test modules, such as tests in
 #       load_boot_tests or wait_boot in setup_zdup.pm
-# Maintainer: Wei Gao <wegao@suse.com>
+# Maintainer: Qingming Su <qmsu@suse.com>
 
 use base "opensusebasetest";
 use strict;
@@ -33,9 +33,7 @@ sub run {
         set_var('BOOT_HDD_IMAGE', 0) unless check_var('ARCH', 'aarch64');
     }
     assert_script_run "sync", 300;
-    type_string "reboot\n";
-    # After remove -f for reboot, we need wait more time for boot menu and avoid exception during reboot caused delay to boot up.
-    assert_screen('inst-bootmenu', 300) unless check_var('ARCH', 's390x');
+    type_string "reboot -f\n";
 }
 
 1;

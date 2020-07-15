@@ -15,7 +15,7 @@
 #
 # Summary: Test evmctl ima_sign options
 # Note: This case should come after 'ima_apprasial_digital_signatures'
-# Maintainer: llzhao <llzhao@suse.com>
+# Maintainer: wnereiz <wnereiz@member.fsf.org>
 # Tags: poo#50333
 
 use base "opensusebasetest";

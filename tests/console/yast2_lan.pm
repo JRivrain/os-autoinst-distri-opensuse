@@ -10,17 +10,9 @@
 
 
 # Summary: yast2 lan functionality test https://bugzilla.novell.com/show_bug.cgi?id=600576
-# - Install yast2-network
-# - Launch yast2 lan
-# - Return if handled by network manager
-# - Handle firewall install screen and dhcp popups
-# - Set domain (zq1.de) and hostname (system var, or "susetest")
-# - Optionally, set ip, mask, hostname and check if /etc/hosts reflects the changes
-# - Get system ip and hostname
 # Maintainer: Jozef Pupava <jpupava@suse.com>
 
-use base "y2_module_consoletest";
-
+use base "console_yasttest";
 use strict;
 use warnings;
 use testapi;
@@ -29,6 +21,24 @@ use y2lan_restart_common;
 use version_utils ':VERSION';
 
 my $module_name;
+
+sub handle_Networkmanager_controlled {
+    assert_screen "Networkmanager_controlled";
+    send_key "ret";    # confirm networkmanager popup
+    assert_screen "Networkmanager_controlled-approved";
+    send_key "alt-c";
+    if (check_screen('yast2-lan-really', 3)) {
+        # SLED11...
+        send_key 'alt-y';
+    }
+    wait_serial("$module_name-0", 60) || die "'yast2 lan' didn't finish";
+}
+
+sub handle_dhcp_popup {
+    if (match_has_tag('dhcp-popup')) {
+        wait_screen_change { send_key 'alt-o' };
+    }
+}
 
 sub run {
     my $self = shift;
@@ -41,10 +51,23 @@ sub run {
     script_run('ls -alF /etc/sysconfig/network/');
     save_screenshot;
 
-    my $opened = open_yast2_lan();
-    wait_still_screen(14);
-    if ($opened eq "Controlled by network manager") {
-        return;
+    my $is_nm = !script_run('systemctl is-active NetworkManager');    # Revert boolean because of bash vs perl's return code.
+
+    $module_name = y2logsstep::yast2_console_exec(yast2_module => 'lan');
+
+    if ($is_nm) {
+        handle_Networkmanager_controlled;
+        return;                                                       # don't change any settings
+    }
+
+    assert_screen [qw(yast2_lan install-susefirewall2 install-firewalld dhcp-popup)], 120;
+    handle_dhcp_popup;
+
+    if (match_has_tag('install-susefirewall2') || match_has_tag('install-firewalld')) {
+        # install firewall
+        send_key "alt-i";
+        # check yast2_lan again after firewall is installed
+        assert_screen('yast2_lan', 90);
     }
 
     my $hostname = get_var('HOSTNAME', 'susetest');
@@ -52,7 +75,7 @@ sub run {
 
     send_key "alt-s";    # open hostname tab
     assert_screen [qw(yast2_lan-hostname-tab dhcp-popup)];
-    handle_dhcp_popup();
+    handle_dhcp_popup;
     send_key "tab";
     for (1 .. 15) { send_key "backspace" }
     type_string $hostname;
@@ -65,18 +88,8 @@ sub run {
     }
 
     assert_screen 'test-yast2_lan-1';
-
-    # Do not set hostname via DHCP - poo#66775
-    # This is already the default on SLE, so change it for openSUSE only
-    if (is_opensuse) {
-        send_key "tab";
-        assert_screen 'yast2_lan-set-hostname-via-dhcp-selected';
-        send_key 'down';
-        send_key_until_needlematch("yast2_lan-set-hostname-via-dhcp-NO-selected", "up", 5);
-        send_key "ret";
-    }
-
-    close_yast2_lan;
+    send_key "alt-o";    # OK=>Save&Exit
+    wait_serial("yast2-lan-status-0", 180) || die "'yast2 lan' didn't finish";
     wait_still_screen;
 
     # Run detailed check only if explicitly configured in the test suite

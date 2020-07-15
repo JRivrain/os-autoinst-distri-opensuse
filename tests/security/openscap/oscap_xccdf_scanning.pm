@@ -15,7 +15,7 @@
 #
 # Summary: Perform evaluation of XCCDF (The eXtensible Configuration
 #          Checklist Description Format) file
-# Maintainer: llzhao <llzhao@suse.com>
+# Maintainer: Wes <whdu@suse.com>
 # Tags: poo#36907, tc#1621171
 
 use base 'consoletest';

@@ -9,13 +9,6 @@
 # without any warranty.
 
 # Summary: Firefox: URLs with various protocols (Case#1436118)
-# - Launch xterm, kill firefox, cleanup previous firefox configuration, launch
-# firefox
-# - On firefox, access a http url
-# - On firefox, access a https url
-# - On firefox, access a ftp url
-# - On firefox, access a local url
-# - Close firefox
 # Maintainer: wnereiz <wnereiz@github>
 
 use strict;
@@ -32,7 +25,7 @@ sub run {
     my %sites_url = (
         http  => "http://httpbin.org/html",
         https => "https://www.google.com/",
-        ftp   => "ftp://mirror.suse.cz/",
+        ftp   => "ftp://mirror.bej.suse.com/",
         local => "file:///usr/share/w3m/w3mhelp.html"
     );
 

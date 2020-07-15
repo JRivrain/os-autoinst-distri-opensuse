@@ -12,7 +12,7 @@
 # Make sure yast2 firewall can opened properly. Configurations can be changed and written correctly.
 # Maintainer: Joaquín Rivera <jeriveramoya@suse.com>
 
-use base "y2_module_guitest";
+use base "y2x11test";
 use strict;
 use warnings;
 use testapi;
@@ -123,11 +123,10 @@ sub change_interface_zone {
 sub verify_zone {
     my (%args) = @_;
 
-    my $interfaces    = $args{interfaces}    //= 'no_interfaces';
-    my $default       = $args{default}       //= 'no_default';
-    my $menu_selected = $args{menu_selected} //= 0;
+    my $interfaces = $args{interfaces} //= 'no_interfaces';
+    my $default    = $args{default}    //= 'no_default';
 
-    assert_and_click 'yast2_firewall_zones' unless $menu_selected;
+    assert_and_click 'yast2_firewall_zones';
     assert_screen 'yast2_firewall_' . $args{name} . '_' . $interfaces . '_' . $default;
 }
 
@@ -169,7 +168,7 @@ sub configure_firewalld {
     verify_interface(device => $iface, zone => 'default');
     verify_zone(name => 'public', interfaces => $iface, default => 'default');
     set_default_zone 'trusted';
-    verify_zone(name => 'trusted', interfaces => $iface, default => 'default', menu_selected => 1);
+    verify_zone(name => 'trusted', interfaces => $iface, default => 'default');
 
     record_info('Interface/Zones', "Verify zone info assigning interface to different zone");
     change_interface_zone 'public';

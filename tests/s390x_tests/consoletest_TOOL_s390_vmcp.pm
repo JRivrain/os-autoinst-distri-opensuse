@@ -1,6 +1,8 @@
 # SUSE’s openQA tests
 #
-# Copyright © 2018-2019 IBM Corp.
+# Copyright © 2009-2013 Bernhard M. Wiedemann
+# Copyright © 2012-2018 SUSE LLC
+# Copyright (C) 2018 IBM Corp.
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -21,7 +23,12 @@ sub run {
     my $self = shift;
     $self->copy_testsuite('TOOL_s390_vmcp');
     $self->execute_script('vmcp_main.sh');
-    $self->cleanup_testsuite('TOOL_s390_vmcp');
+    $self->cleanup_testsuite('vmcp');
+}
+
+sub post_fail_hook {
+    my $self = shift;
+    $self->export_logs();
 }
 
 sub test_flags {

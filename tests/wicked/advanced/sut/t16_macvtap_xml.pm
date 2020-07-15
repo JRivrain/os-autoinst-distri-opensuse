@@ -17,8 +17,9 @@ use base 'wickedbase';
 use strict;
 use warnings;
 use testapi;
+use utils 'zypper_call';
 
-our $macvtap_log = '/tmp/macvtap_results_xml.txt';
+our $macvtap_log = '/tmp/macvtap_results.txt';
 
 sub run {
     my ($self, $ctx) = @_;
@@ -37,10 +38,6 @@ sub post_fail_hook {
     select_console('log-console');
     upload_logs($macvtap_log);
     $self->SUPER::post_fail_hook;
-}
-
-sub test_flags {
-    return {always_rollback => 1};
 }
 
 1;

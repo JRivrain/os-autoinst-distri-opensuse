@@ -8,8 +8,6 @@
 # without any warranty.
 
 # Summary: Show information about current session (window system)
-# - Check current session type
-# - Select graphic console (x11), unless DESKTOP is set to textmode
 # Maintainer: Jan Baier <jbaier@suse.cz>
 
 use base "opensusebasetest";
@@ -29,8 +27,10 @@ sub run {
     if ($session_type) {
         record_info("$session_type", "Current session type is $session_type");
     } else {
-        die('Session type is not defined');
+        record_soft_fail("Session type is not defined");
     }
+
+    type_string "exit\n";    # logout
 
     select_console 'x11' unless check_var('DESKTOP', 'textmode');
 }

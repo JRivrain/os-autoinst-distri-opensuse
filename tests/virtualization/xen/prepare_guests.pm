@@ -16,21 +16,12 @@ use strict;
 use warnings;
 use testapi;
 use utils;
-use version_utils 'is_sle';
 
 sub run {
     my $self = shift;
 
     # Ensure additional package is installed
     zypper_call '-t in libvirt-client';
-
-    assert_script_run "mkdir -p /var/lib/libvirt/images/xen/";
-
-    if (is_sle('<=12-SP1')) {
-        script_run "umount /home";
-        assert_script_run qq(sed -i 's/\\/home/\\/var\\/lib\\/libvirt\\/images\\/xen/g' /etc/fstab);
-        script_run "mount /var/lib/libvirt/images/xen/";
-    }
 
     assert_script_run qq(echo 'log_level = 1
     log_filters="3:remote 4:event 3:json 3:rpc"
@@ -50,11 +41,12 @@ sub run {
         </network>" > ~/default.xml);
         assert_script_run "virsh net-define --file ~/default.xml";
     }
-    assert_script_run "virsh net-start default || true", 90;
-    assert_script_run "virsh net-autostart default",     90;
+    assert_script_run "virsh net-start default || true";
+    assert_script_run "virsh net-autostart default";
 
     # Show all guests
     assert_script_run 'virsh list --all';
+    assert_script_run "mkdir -p /var/lib/libvirt/images/xen/";
     wait_still_screen 1;
 
     # Install every defined guest
@@ -62,9 +54,7 @@ sub run {
         $self->create_guest($guest, 'virt-install');
     }
 
-    script_run 'history -a';
-    script_run('cat ~/virt-install* | grep ERROR', 30);
-    script_run('xl dmesg |grep -i "fail\|error" |grep -vi Loglevel') if (get_var("REGRESSION", '') =~ /xen/);
+    wait_still_screen 30;    # Here we are sure guests are still in process of installation
 }
 
 1;

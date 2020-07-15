@@ -14,27 +14,20 @@ use base "opensusebasetest";
 use strict;
 use warnings;
 use testapi;
-use version_utils qw(is_sle is_tumbleweed is_leap);
-use Utils::Architectures 'is_aarch64';
-use Utils::Backends 'is_hyperv';
+use version_utils 'is_sle';
 use utils qw(assert_screen_with_soft_timeout ensure_serialdev_permissions);
-
-sub expect_mount_by_uuid {
-    return (is_hyperv || is_sle('>=15-sp2') || is_tumbleweed || is_leap('>=15.2'));
-}
 
 sub post_fail_hook {
     assert_script_run('timedatectl');
     assert_script_run('locale');
     assert_script_run('cat /etc/vconsole.conf');
-    assert_script_run('cat /etc/fstab');
     assert_script_run('ldd --help');
 }
 
 sub verify_user_info {
     my (%args) = @_;
-    my $user   = $args{user_is_root};
-    my $lang   = is_sle('15+') ? 'en_US' : get_var('JEOSINSTLANG', 'en_US');
+    my $user = $args{user_is_root};
+    my $lang = is_sle('15+') ? 'en_US' : get_var('JEOSINSTLANG', 'en_US');
 
     my %tz_data = ('en_US' => 'UTC', 'de_DE' => 'Europe/Berlin');
     assert_script_run("timedatectl | awk '\$1 ~ /Time/ { print \$3 }' | grep ^" . $tz_data{$lang} . "\$");
@@ -51,31 +44,12 @@ sub verify_user_info {
     assert_script_run("ldd --help | grep '^" . $lang_data{$proglang} . "'");
 }
 
-sub verify_mounts {
-    my $expected_type = {mount_type => (expect_mount_by_uuid) ? 'UUID' : 'LABEL'};
-
-    my @findmnt_entries = grep { /\s$expected_type->{mount_type}.*\stranslated\sto\s/ }
-      split(/\n/, script_output('findmnt --verbose --verify'));
-    (scalar(@findmnt_entries) > 0) or die "Expected mounts by $expected_type->{mount_type} have not been found\n";
-
-    @findmnt_entries = grep { !/^$expected_type->{mount_type}/ }
-      split(/\n/, script_output('findmnt --fstab --raw --noheadings --df'));
-    (scalar(@findmnt_entries) == 0) or die "Not all mounts are mounted by $expected_type->{mount_type}\nUnexpected mount(s) ( @findmnt_entries )\n";
-
-    assert_script_run('mount -fva');
-}
-
 sub run {
-    my ($self) = @_;
-
-    mouse_hide;    # JeOS on generalhw
-
     my $lang = is_sle('15+') ? 'en_US' : get_var('JEOSINSTLANG', 'en_US');
 
+    my %keylayout_key = ('en_US' => 'e', 'de_DE' => 'd');
     # For 'en_US' pick 'en_US', for 'de_DE' select 'de_DE'
     my %locale_key = ('en_US' => 'e', 'de_DE' => 'd');
-    # For 'en_US' pick 'us', for 'de_DE' select 'de'
-    my %keylayout_key = ('en_US' => 'u', 'de_DE' => 'd');
     # For 'en_US' pick 'UTC', for 'de_DE' select 'Europe/Berlin'
     my %tz_key = ('en_US' => 'u', 'de_DE' => 'e');
 
@@ -91,10 +65,14 @@ sub run {
     send_key 'ret';
 
     # Accept license
-    unless (is_leap('<15.2')) {
-        foreach my $license_needle (qw(jeos-license jeos-doyouaccept)) {
-            assert_screen $license_needle;
+    if (is_sle) {
+        if (check_screen 'jeos-license', 60) {
             send_key 'ret';
+            assert_screen 'jeos-doyouaccept';
+            send_key 'ret';
+        }
+        else {
+            record_soft_failure 'bsc#1127166 - License moved to another location';
         }
     }
 
@@ -102,12 +80,15 @@ sub run {
     send_key_until_needlematch "jeos-timezone-$lang", $tz_key{$lang}, 10;
     send_key 'ret';
 
-    # Enter password & Confirm
-    foreach my $password_needle (qw(jeos-root-password jeos-confirm-root-password)) {
-        assert_screen $password_needle;
-        type_password;
-        send_key 'ret';
-    }
+    # Enter password
+    assert_screen 'jeos-root-password';
+    type_password;
+    send_key 'ret';
+
+    # Confirm password
+    assert_screen 'jeos-confirm-root-password';
+    type_password;
+    send_key 'ret';
 
     if (is_sle) {
         assert_screen 'jeos-please-register';
@@ -118,17 +99,7 @@ sub run {
     # when there are more jobs running concurrently. We need to wait for
     # various disk optimizations and snapshot enablement to land.
     # Meltdown/Spectre mitigations makes this even worse.
-    if (check_var('BACKEND', 'generalhw') && !defined(get_var('GENERAL_HW_VNC_IP'))) {
-        # Wait jeos-firstboot is done and clear screen, as we are already logged-in via ssh
-        wait_still_screen;
-        $self->clear_and_verify_console;
-    }
-    else {
-        assert_screen [qw(linux-login reached-power-off)], 1000;
-        if (match_has_tag 'reached-power-off') {
-            die "At least it reaches power off, but booting up failed, see boo#1143051. A workaround is not possible";
-        }
-    }
+    assert_screen_with_soft_timeout('linux-login', timeout => 1000, soft_timeout => 300, bugref => 'bsc#1077007');
 
     select_console('root-console', skip_set_standard_prompt => 1, skip_setterm => 1);
 
@@ -161,9 +132,6 @@ sub run {
     if ($lang ne 'en_US') {
         assert_script_run("sed -ie '/KEYMAP=/s/=.*/=us/' /etc/vconsole.conf");
     }
-
-    # openSUSE JeOS has SWAP mounted as LABEL instead of UUID until kiwi 9.19.0, so tw and Leap 15.2+ are fine
-    verify_mounts unless is_leap('<15.2') && is_aarch64;
 }
 
 sub test_flags {

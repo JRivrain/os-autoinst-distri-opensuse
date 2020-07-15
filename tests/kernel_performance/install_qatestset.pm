@@ -7,30 +7,30 @@
 # notice and this notice are preserved.  This file is offered as-is,
 # without any warranty.
 #
+#
 # Summary: setup performance run environment
 # Maintainer: Joyce Na <jna@suse.de>
 
 package install_qatestset;
-use base 'y2_installbase';
+use base "y2logsstep";
 use power_action_utils 'power_action';
 use strict;
 use warnings;
 use utils;
 use testapi;
-use repo_tools 'add_qa_head_repo';
 
 sub install_pkg {
-    add_qa_head_repo;
+    my $qa_server_repo = get_required_var('QA_REPO');
+    zypper_call("rr qa-ibs");
+    zypper_call(
+        "--no-gpg-check ar -f '$qa_server_repo' qa-ibs");
+    zypper_call("--no-gpg-check ref");
     zypper_call("install qa_testset_automation");
 }
 
 sub setup_environment {
     my $runid             = get_required_var('QASET_RUNID');
     my $mitigation_switch = get_required_var('MITIGATION_SWITCH');
-    my $ver_cfg           = get_required_var('VER_CFG');
-    my $ver_path          = "/root";
-
-    assert_script_run("wget -N -P $ver_path $ver_cfg 2>&1");
     assert_script_run(
         "/usr/share/qa/qaset/bin/deploy_performance.sh $runid $mitigation_switch"
     );
@@ -40,11 +40,7 @@ sub setup_environment {
 sub run {
     install_pkg;
     setup_environment;
-    power_action('poweroff', keepconsole => 1, textmode => 1);
-}
-
-sub post_fail_hook {
-    my ($self) = @_;
+    power_action('poweroff');
 }
 
 sub test_flags {

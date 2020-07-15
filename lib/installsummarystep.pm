@@ -1,5 +1,5 @@
 package installsummarystep;
-use base 'y2_installbase';
+use base "y2logsstep";
 use testapi;
 use strict;
 use warnings;
@@ -18,7 +18,6 @@ sub accept3rdparty {
 
 sub accept_changes_with_3rd_party_repos {
     my ($self) = @_;
-    my $timeout = 30 * get_var('TIMEOUT_SCALE', 1);    # Default timeout
     if (check_var('VIDEOMODE', 'text')) {
         send_key $cmd{accept};
         accept3rdparty;
@@ -29,7 +28,7 @@ sub accept_changes_with_3rd_party_repos {
         send_key $cmd{ok};
         accept3rdparty;
     }
-    assert_screen 'inst-overview', $timeout;
+    assert_screen 'inst-overview';
 }
 
 1;

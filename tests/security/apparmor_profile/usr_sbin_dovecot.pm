@@ -15,10 +15,6 @@
 #
 # Summary: Test with "usr.sbin.dovecot" is in "enforce" mode and AppArmor is
 #          "enabled && active", stop and start the dovecot service have no error.
-# - Install dovecot
-# - Run "aa-enforce usr.sbin.dovecot" and check output for enforce mode enabled
-# - Stop, start, restart and check status for dovecot service
-# - Check audit.log for errors related to dovecot
 # Maintainer: llzhao <llzhao@suse.com>
 # Tags: poo#44999, tc#1695949
 

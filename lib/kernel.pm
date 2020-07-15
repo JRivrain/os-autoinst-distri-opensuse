@@ -24,7 +24,7 @@ sub remove_kernel_packages {
         push @packages, qw(kernel-xen kernel-xen-devel);
     }
 
-    zypper_call('-n rm ' . join(' ', @packages), exitcode => [0, 104]);
+    zypper_call('-n rm ' . join(' ', @packages), exitcode => [0, 104], dumb_term => 1);
 
     return @packages;
 }

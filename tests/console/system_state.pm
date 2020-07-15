@@ -9,8 +9,6 @@
 
 # Summary:  Export the existing status of running tasks and system load
 # for future reference
-# - Collect running process list
-# - Collect system load average
 # Maintainer: Zaoliang Luo <zluo@suse.de>
 
 use base "consoletest";

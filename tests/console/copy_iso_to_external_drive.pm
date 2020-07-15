@@ -15,7 +15,6 @@ use base 'btrfs_test';
 use strict;
 use warnings;
 use testapi;
-use utils 'get_root_console_tty';
 
 sub run {
     my ($self) = @_;
@@ -45,8 +44,7 @@ sub run {
 sub post_run_hook {
     #prepare environment for next test
     type_string "logout\n";
-    my $tty = get_root_console_tty;
-    assert_screen "tty$tty-selected";
+    assert_screen "text-login";
     select_console "x11";
 }
 

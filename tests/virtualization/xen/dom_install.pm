@@ -32,7 +32,7 @@ sub run {
 
     foreach my $guest (keys %xen::guests) {
         record_info "$guest", "Install vm-dump-metrics on xl-$guest";
-        script_retry "ssh root\@$guest 'zypper -n in vm-dump-metrics'", delay => 30, retry => 6;
+        assert_script_run "ssh root\@$guest 'zypper -n in vm-dump-metrics'";
     }
 }
 

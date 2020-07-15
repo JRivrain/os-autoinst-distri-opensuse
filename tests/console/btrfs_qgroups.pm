@@ -10,15 +10,6 @@
 # Summary: Btrfs quota group limit tests improvements
 #	 Creating qgroups in a hierarchy for multiple subvolumes,
 #	 putting data into them and then running btrfsck on the hard disk
-# - Call set_playground_disk (Return a disk without a partition table)
-# - Create a btrfs filesystem on it, mounts the disk and change to mount point
-# - Enable quota in filesystem
-# - Create subvolumes, qgroups, assigns, set limits, fill with data
-# - Create a test file, copy and sync to test limits
-# - Check quota limits (single file, overwrite existing file)
-# - Test exceeding real quota
-# - Umount test filesystem; check filesystem for btrfs errors, erase partition
-# table.
 # Maintainer: mkravec <mkravec@suse.com>
 
 use base 'btrfs_test';
@@ -37,13 +28,7 @@ sub run {
     assert_script_run "mkdir $dest";
     $self->set_playground_disk;
     my $disk = get_required_var('PLAYGROUNDDISK');
-
-    # forcing mkfs.btrfs yields no warning in case we are creating fs over drive with partitions
-    if (script_run "mkfs.btrfs $disk && mount $disk $dest && cd $dest") {
-        $self->cleanup_partition_table;
-        assert_script_run "mkfs.btrfs $disk && mount $disk $dest && cd $dest", fail_message => 'Failed to create FS on the second attempt!';
-    }
-
+    assert_script_run "mkfs.btrfs -f $disk && mount $disk $dest && cd $dest";
     assert_script_run "btrfs quota enable .";
 
     # Create subvolumes, qgroups, assigns and limits
@@ -97,18 +82,18 @@ sub run {
     }
     # write some more times to the same file to be sure
     if (script_run("for c in {1..38}; do $write_chunk; done")) {
-        record_soft_failure 'File overwrite test: bsc#1113042 - btrfs is not informed to commit transaction';
+        record_soft_failure 'bsc#1019614';
     }
     assert_script_run 'sync';
     assert_script_run 'rm e/file', fail_message => 'bsc#993841';
     # test exceeding real quota
     my $files_creation = '! for c in {1..2}; do dd if=/dev/zero bs=1M count=190 of=e/file_$c; done';
-    assert_script_run $files_creation, 150;
+    assert_script_run $files_creation;
     if (script_run('rm e/file_*')) {
         record_soft_failure 'File removal test: bsc#1113042 - btrfs is not informed to commit transaction';
         assert_script_run 'sync';
-        assert_script_run $files_creation, 150;
-        assert_script_run 'rm -f e/file_*';
+        assert_script_run $files_creation;
+        assert_script_run 'rm e/file_*';
     }
 
     assert_script_run "cd; umount $dest";

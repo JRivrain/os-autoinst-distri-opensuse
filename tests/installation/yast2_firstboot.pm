@@ -11,8 +11,7 @@
 # Doc: https://en.opensuse.org/YaST_Firstboot
 # Maintainer: Martin Loviska <mloviska@suse.com>
 
-use base 'y2_installbase';
-use y2_logs_helper qw(accept_license verify_license_has_to_be_accepted);
+use base "y2logsstep";
 use strict;
 use warnings;
 use testapi;
@@ -25,11 +24,13 @@ sub language_and_keyboard {
         l => 'lang',
         k => 'keyboard'
     };
-    assert_screen('lang_and_keyboard', 60);
+    assert_screen('lang_and_keyboard', 45);
     mouse_hide(1);
     foreach (sort keys %${shortcuts}) {
         send_key 'alt-' . $_;
         assert_screen $shortcuts->{$_} . '_selected';
+        send_key_until_needlematch 'expanded_list', 'spc', 5, 7;
+        wait_screen_change(sub { send_key 'ret'; }, 5);
     }
     wait_screen_change(sub { send_key $cmd{next}; }, 7);
 }
@@ -43,7 +44,19 @@ sub license {
         $self->verify_license_has_to_be_accepted;
         $self->accept_license;
     }
-    send_key $cmd{next};
+    wait_screen_change(sub { send_key $cmd{next}; }, 7);
+    # Workaround license checkbox, applicable for sle12sp5 only currently
+    assert_screen([qw(license-agreement inst-timezone)]);
+    if (match_has_tag('license-agreement')) {
+        record_soft_failure 'bsc#1131327 License checkbox was cleared! Re-check again!';
+        send_key 'alt-a';
+        assert_screen('license-agreement-accepted');
+        wait_screen_change(sub { send_key $cmd{next}; }, 7);
+    }
+    elsif (match_has_tag('inst-timezone')) {
+        return;
+    }
+    # End of WA
 }
 
 sub welcome {
@@ -72,7 +85,7 @@ sub user_setup {
 }
 
 sub root_setup {
-    assert_screen 'root_user', 60;
+    assert_screen 'root_user';
     enter_rootinfo;
     wait_screen_change(sub { send_key $cmd{next}; }, 7);
 }
@@ -87,6 +100,7 @@ sub run {
     root_setup;
     assert_screen 'installation_completed';
     send_key $cmd{finish};
+    assert_screen([qw(displaymanager generic-desktop)], 120);
 }
 
 sub post_fail_hook {

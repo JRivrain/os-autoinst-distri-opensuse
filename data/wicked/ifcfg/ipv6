@@ -1,5 +1,0 @@
-BOOTPROTO='dhcp'
-NAME='Ethernet Card 0'
-
-STARTMODE='auto'
-USERCONTROL='no'

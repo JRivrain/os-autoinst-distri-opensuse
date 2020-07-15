@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright © 2017-2020 SUSE LLC
+# Copyright © 2017-2018 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -8,10 +8,9 @@
 # without any warranty.
 
 # Summary:  Basic preparation before any HPC test
-# Maintainer: Sebastian Chlad <schlad@suse.de>
+# Maintainer: mgriessmeier <mgriessmeier@suse.com>
 
-use base 'hpcbase';
-use base 'hpc::cluster';
+use base "hpcbase";
 use strict;
 use warnings;
 use testapi;
@@ -27,9 +26,6 @@ sub run {
 
     # Stop firewall
     systemctl 'stop ' . $self->firewall;
-
-    $self->provision_cluster();
-
     set_hostname(get_var('HOSTNAME', 'susetest'));
 
     if (get_var('HPC_REPO')) {

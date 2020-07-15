@@ -9,9 +9,6 @@
 # without any warranty.
 
 # Summary: Rename gnote title
-# - Launch gnote
-# - Send CTRL-N and check
-# - Send UP twice, type "new title-opensuse"  and check
 # Maintainer: Xudong Zhang <xdzhang@suse.com>
 # Tags: tc#1436169
 

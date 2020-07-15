@@ -15,7 +15,7 @@
 #
 # Summary: Test mokutil signing function - Create necessary key pairs,
 #          sign the kernel, import cert and boot with signed kernel.
-# Maintainer: llzhao <llzhao@suse.com>
+# Maintainer: wnereiz <wnereiz@member.fsf.org>
 # Tags: poo#45701
 
 use base "consoletest";
@@ -23,7 +23,7 @@ use strict;
 use warnings;
 use testapi;
 use utils;
-use version_utils 'is_sle';
+use version_utils qw(is_sle);
 use registration 'add_suseconnect_product';
 use power_action_utils "power_action";
 

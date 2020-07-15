@@ -14,7 +14,7 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 #
 # Summary: Setup environment for openscap test
-# Maintainer: llzhao <llzhao@suse.com>
+# Maintainer: Wes <whdu@suse.com>
 # Tags: poo#37006
 
 use base 'consoletest';

@@ -12,14 +12,9 @@
 #
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, see <http://www.gnu.org/licenses/>.
-
-# Summary: Enforce a disabled profile with aa-enforce.
-# - restarts apparmor
-# - disables nscd by running aa-disable /usr/sbin/nscd
-# - use aa-status to check if nscd is really disabled
-# - runs aa-enforce on /usr/bin/nscd to enforce mode and check output
-# - runs aa-status and check if nscd is on enforce mode.
-# Maintainer: llzhao <llzhao@suse.com>
+#
+# Summary: Enforce a disabled profile with aa-enforce
+# Maintainer: Wes <whdu@suse.com>
 # Tags: poo#36877, tc#1621145
 
 use strict;
@@ -27,12 +22,34 @@ use warnings;
 use base "apparmortest";
 use testapi;
 use utils;
-use services::apparmor;
 
 sub run {
     my ($self) = @_;
-    select_console 'root-console';
-    services::apparmor::check_aa_enforce($self);
+
+    my $executable_name = "/usr/sbin/nscd";
+    my $profile_name    = "usr.sbin.nscd";
+    my $named_profile   = "";
+    #select_console 'root-console';
+
+    systemctl('restart apparmor');
+
+    validate_script_output "aa-disable $executable_name", sub {
+        m/Disabling.*nscd/;
+    };
+
+    # Recalculate profile name in case
+    $named_profile = $self->get_named_profile($profile_name);
+
+    # Check if /usr/sbin/ntpd is really disabled
+    die "$executable_name should be disabled"
+      if (script_run("aa-status | sed 's/[ \t]*//g' | grep -x $named_profile") == 0);
+
+    validate_script_output "aa-enforce $executable_name", sub {
+        m/Setting.*nscd to enforce mode/;
+    };
+
+    # Check if $named_profile is in "enforce" mode
+    $self->aa_status_stdout_check($named_profile, "enforce");
 }
 
 1;

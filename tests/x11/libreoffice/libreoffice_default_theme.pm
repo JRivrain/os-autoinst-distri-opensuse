@@ -8,16 +8,7 @@
 # without any warranty.
 
 # Summary: LibreOffice: Default icon theme verification
-# - Start ooffice
-# - Open options menu and check
-# - Quit ooffice
-# - Launch xterm, run export OOO_FORCE_DESKTOP="none" and check
-# - Close xterm
-# - Start ooffice
-# - Open options menu and check
-# - Quit ooffice
-# - Launch xterm, unset OOO_FORCE_DESKTOP and close xterm
-# Maintainer: Zhaocong Jia <zcjia@suse.com>
+# Maintainer: Chingkai <qkzhu@suse.com>
 # Tags: tc#1503789
 
 use base "x11test";

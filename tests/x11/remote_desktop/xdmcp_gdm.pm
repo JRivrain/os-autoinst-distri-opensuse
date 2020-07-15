@@ -14,7 +14,7 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 #
 # Summary: Remote Login: XDMCP with gdm and GNOME session configured
-# Maintainer: Grace Wang <grace.wang@suse.com>
+# Maintainer: Chingkai <qkzhu@suse.com>
 # Tags: tc#1586203
 
 use strict;

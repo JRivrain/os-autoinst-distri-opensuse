@@ -8,7 +8,7 @@
 # without any warranty.
 
 # Summary: Tracker: Find an application with Search in the Main Menu
-# Maintainer: Zhaocong Jia <zcjia@suse.com> Grace Wang <grace.wang@suse.com>
+# Maintainer: Chingkai Chu <qkzhu@suse.com>
 # Tags: tc#1503761
 
 use base "x11test";

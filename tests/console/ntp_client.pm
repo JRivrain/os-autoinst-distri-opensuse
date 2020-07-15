@@ -1,4 +1,4 @@
-# Copyright (C) 2018-2020 SUSE LLC
+# Copyright (C) 2018 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -13,18 +13,11 @@ use strict;
 use warnings;
 use testapi;
 use utils;
-use version_utils 'is_sle';
 
 sub run {
-    my $self = shift;
-    $self->select_serial_terminal;
+    select_console 'root-console';
 
     assert_script_run 'timedatectl';
-
-    if (is_sle) {
-        systemctl 'enable chronyd';
-        systemctl 'start chronyd';
-    }
 
     # ensure that ntpd is neither installed nor enabled nor active
     systemctl 'is-active ntpd',  expect_false => 1;
@@ -43,7 +36,7 @@ sub run {
     systemctl 'is-active chronyd';
     systemctl 'status chronyd';
     assert_script_run 'chronyc tracking';
-    assert_script_run 'chronyc waitsync 40 0.01 && chronyc sources', 400;
+    assert_script_run 'chronyc sources';
 }
 
 1;

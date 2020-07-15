@@ -14,7 +14,7 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 #
 # Summary: Test IMA kernel command line for IMA hash
-# Maintainer: llzhao <llzhao@suse.com>
+# Maintainer: wnereiz <wnereiz@member.fsf.org>
 # Tags: poo#48932
 
 use base "opensusebasetest";
@@ -53,9 +53,9 @@ sub run {
     add_grub_cmdline_settings('ima_policy=tcb ima_hash=none');
     my $last_algo = "none";
 
-    for my $i (@algo_list) {
-        replace_grub_cmdline_settings("ima_hash=$last_algo", "ima_hash=@$i{algo}", update_grub => 1);
-        $last_algo = @$i{algo};
+    for my $a (@algo_list) {
+        replace_grub_cmdline_settings("ima_hash=$last_algo", "ima_hash=@$a{algo}", 1);
+        $last_algo = @$a{algo};
 
         # Grep and output grub settings to the terminal for debugging
         assert_script_run("grep GRUB_CMDLINE_LINUX /etc/default/grub");
@@ -65,11 +65,11 @@ sub run {
         $self->wait_boot;
         $self->select_serial_terminal;
 
-        my $meas_tmpfile = "/tmp/ascii_runtime_measurements-" . @$i{algo};
+        my $meas_tmpfile = "/tmp/ascii_runtime_measurements-" . @$a{algo};
         assert_script_run("cp $meas_file $meas_tmpfile");
         upload_logs "$meas_tmpfile";
 
-        my $out = script_output("grep '^10\\s*[a-fA-F0-9]\\{40\\}\\s*ima-ng\\s*@$i{algo}:[a-fA-F0-9]\\{@$i{len}\\}\\s*\\/' $meas_file |wc -l");
+        my $out = script_output("grep '^10\\s*[a-fA-F0-9]\\{40\\}\\s*ima-ng\\s*@$a{algo}:[a-fA-F0-9]\\{@$a{len}\\}\\s*\\/' $meas_file |wc -l");
         die('Too few items') if ($out < 100);
     }
 }

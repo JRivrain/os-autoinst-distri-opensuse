@@ -13,10 +13,7 @@
 
 package publiccloud::ec2;
 use Mojo::Base 'publiccloud::provider';
-use Mojo::JSON 'decode_json';
 use testapi;
-
-use constant CREDENTIALS_FILE => '/root/amazon_credentials';
 
 has ssh_key      => undef;
 has ssh_key_file => undef;
@@ -26,9 +23,10 @@ sub vault_create_credentials {
     my ($self) = @_;
 
     record_info('INFO', 'Get credentials from VAULT server.');
-    my $data = $self->vault_get_secrets('/aws/creds/openqa-role');
-    $self->key_id($data->{access_key});
-    $self->key_secret($data->{secret_key});
+    my $res = $self->vault_api('/v1/aws/creds/openqa-role', method => 'get');
+    $self->vault_lease_id($res->{lease_id});
+    $self->key_id($res->{data}->{access_key});
+    $self->key_secret($res->{data}->{secret_key});
     die('Failed to retrieve key') unless (defined($self->key_id) && defined($self->key_secret));
 }
 
@@ -36,11 +34,10 @@ sub _check_credentials {
     my ($self) = @_;
     my $max_tries = 6;
     for my $i (1 .. $max_tries) {
-        my $out = script_output('aws ec2 describe-images --dry-run', 300, proceed_on_failure => 1);
-        return 1 if ($out !~ /AuthFailure/m && $out !~ /"aws configure"/m);
+        my $out = script_output('aws ec2 describe-images --dry-run', 60, proceed_on_failure => 1);
+        return 1 if ($out !~ /AuthFailure/m);
         sleep 30;
     }
-    return;
 }
 
 sub init {
@@ -56,15 +53,6 @@ sub init {
     assert_script_run('export AWS_DEFAULT_REGION="' . $self->region . '"');
 
     die('Credentials are invalid') unless ($self->_check_credentials());
-
-    if (get_var('PUBLIC_CLOUD_SLES4SAP')) {
-        my $credentials_file = "[default]" . $/
-          . 'aws_access_key_id=' . $self->key_id . $/
-          . 'aws_secret_access_key=' . $self->key_secret;
-
-        save_tmp_file(CREDENTIALS_FILE, $credentials_file);
-        assert_script_run('curl -O ' . autoinst_url . "/files/" . CREDENTIALS_FILE);
-    }
 }
 
 sub find_img {
@@ -114,45 +102,37 @@ sub upload_img {
 
     die("Create key-pair failed") unless ($self->create_keypair($self->prefix . time, 'QA_SSH_KEY.pem'));
 
-    my ($img_name)    = $file =~ /([^\/]+)$/;
-    my $img_arch      = get_var('PUBLIC_CLOUD_ARCH', 'x86_64');
-    my $sec_group     = get_var('PUBLIC_CLOUD_EC2_UPLOAD_SECGROUP');
-    my $vpc_subnet    = get_var('PUBLIC_CLOUD_EC2_UPLOAD_VPCSUBNET');
-    my $instance_type = get_var('PUBLIC_CLOUD_EC2_UPLOAD_INSTANCE_TYPE');
-    # Used for helper VM to create/build the image on CSP. When uploading a on-demand image, this ID should point
-    # to and on-demand image. If not specified, the id gets read from ec2utils.conf file.
-    my $ami_id = get_var('PUBLIC_CLOUD_EC2_UPLOAD_AMI');
+    my ($img_name) = $file =~ /([^\/]+)$/;
+    my $sec_group  = get_var('PUBLIC_CLOUD_EC2_UPLOAD_SECGROUP');
+    my $vpc_subnet = get_var('PUBLIC_CLOUD_EC2_UPLOAD_VPCSUBNET');
 
-    assert_script_run("ec2uploadimg --access-id '" . $self->key_id
-          . "' -s '" . $self->key_secret . "' "
+    assert_script_run("ec2uploadimg --access-id '"
+          . $self->key_id
+          . "' -s '"
+          . $self->key_secret . "' "
           . "--backing-store ssd "
           . "--grub2 "
-          . "--machine '" . $img_arch . "' "
+          . "--machine 'x86_64' "
           . "-n '" . $self->prefix . '-' . $img_name . "' "
-          . "--virt-type hvm --sriov-support "
-          . ($img_name =~ /byos/i ? '' : '--use-root-swap ')
-          . '--ena-support '
+          . (($img_name =~ /hvm/i) ? "--virt-type hvm --sriov-support " : "--virt-type para ")
+          . (($img_name !~ /byos/i) ? '--use-root-swap ' : '--ena-support ')
           . "--verbose "
           . "--regions '" . $self->region . "' "
           . "--ssh-key-pair '" . $self->ssh_key . "' "
           . "--private-key-file " . $self->ssh_key_file . " "
-          . "-d 'OpenQA upload image' "
-          . ($sec_group     ? "--security-group-ids '" . $sec_group . "' " : '')
-          . ($vpc_subnet    ? "--vpc-subnet-id '" . $vpc_subnet . "' "     : '')
-          . ($ami_id        ? "--ec2-ami '" . $ami_id . "' "               : '')
-          . ($instance_type ? "--type '" . $instance_type . "' "           : '')
+          . "-d 'OpenQA tests' "
+          . ($sec_group  ? "--security-group-ids '" . $sec_group . "' " : '')
+          . ($vpc_subnet ? "--vpc-subnet-id '" . $vpc_subnet . "' "     : '')
           . "'$file'",
         timeout => 60 * 60
     );
 
     my $ami = $self->find_img($img_name);
     die("Cannot find image after upload!") unless $ami;
-    validate_script_output('aws ec2 describe-images --image-id ' . $ami, sub { /"EnaSupport":\s+true/ });
-    record_info('INFO', "AMI: $ami");    # Show the ami-* number, could be useful
     return $ami;
 }
 
-sub img_proof {
+sub ipa {
     my ($self, %args) = @_;
 
     $args{instance_type}        //= 't2.large';
@@ -163,69 +143,14 @@ sub img_proof {
     $args{key_secret}           //= $self->key_secret;
     $args{key_name}             //= $self->ssh_key;
 
-    return $self->run_img_proof(%args);
+    return $self->run_ipa(%args);
 }
 
 sub cleanup {
     my ($self) = @_;
-    $self->terraform_destroy();
+    $self->terraform_destroy() if ($self->terraform_applied);
     $self->delete_keypair();
     $self->vault_revoke();
-}
-
-sub describe_instance
-{
-    my ($self, $instance) = @_;
-    my $json_output = decode_json(script_output('aws ec2 describe-instances --filter Name=instance-id,Values=' . $instance->instance_id(), quiet => 1));
-    my $i_desc      = $json_output->{Reservations}->[0]->{Instances}->[0];
-    return $i_desc;
-}
-
-sub get_state_from_instance
-{
-    my ($self, $instance) = @_;
-    return $self->describe_instance($instance)->{State}->{Name};
-}
-
-sub get_ip_from_instance
-{
-    my ($self, $instance) = @_;
-    return $self->describe_instance($instance)->{PublicIpAddress};
-}
-
-sub stop_instance
-{
-    my ($self, $instance) = @_;
-    my $instance_id = $instance->instance_id();
-    my $attempts    = 60;
-
-    die("Outdated instance object") if ($instance->public_ip ne $self->get_ip_from_instance($instance));
-
-    assert_script_run('aws ec2 stop-instances --instance-ids ' . $instance_id, quiet => 1);
-
-    while ($self->get_state_from_instance($instance) ne 'stopped' && $attempts-- > 0) {
-        sleep 5;
-    }
-    die("Failed to stop instance $instance_id") unless ($attempts > 0);
-}
-
-sub start_instance
-{
-    my ($self, $instance, %args) = @_;
-    my $attempts    = 60;
-    my $instance_id = $instance->instance_id();
-
-    my $i_desc = $self->describe_instance($instance);
-    die("Try to start a running instance") if ($i_desc->{State}->{Name} ne 'stopped');
-
-    assert_script_run("aws ec2 start-instances --instance-ids $instance_id", quiet => 1);
-    sleep 1;    # give some time to update public_ip
-    my $public_ip;
-    while (!defined($public_ip) && $attempts-- > 0) {
-        $public_ip = $self->get_ip_from_instance($instance);
-    }
-    die("Unable to get new public IP") unless ($public_ip);
-    $instance->public_ip($public_ip);
 }
 
 1;

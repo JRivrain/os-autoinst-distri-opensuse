@@ -14,19 +14,7 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 #
 # Summary: Display information about logged AppArmor messages
-# - Restart auditd
-# - Create temporary apparmor profile on /tmp
-# - Add root to use_group on /etc/apparmor/notify.conf
-# - Run "aa-notify -l"
-# - Make nscd fail intentionally, removing "/etc/nscd.conf" entry from
-# /tmp/apparmor.d/usr.sbin.nscd
-# - Run "aa-disable nscd"
-# - Put nscd back in enforce mode: "aa-enforce -d /tmp/apparmor.d nscd"
-# - Restart nscd
-# - Check the errors from "aa-notify -l -v"
-# - Disable temporary profile, put nscd back in enforce mode, restart nscd
-# - Cleanup temporary profiles
-# Maintainer: llzhao <llzhao@suse.com>
+# Maintainer: Wes <whdu@suse.com>
 # Tags: poo#36883, tc#1621139
 
 use strict;

@@ -14,13 +14,11 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 
 # Summary: Make sure we are logged in
-# - Wait for boot if BACKEND is ipmi
-# - Set root-console
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
 use strict;
 use warnings;
-use base 'y2_installbase';
+use base 'y2logsstep';
 use testapi;
 
 sub run {

@@ -13,18 +13,8 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 #
-# Summary: Test the profile generation utility of Apparmor using aa-genprof.
-# - Starts auditd
-# - Creates a temporary profile dir in /tmp
-# - Run "aa-genprof -d /tmp/apparmor.d nscd" inside a screen
-# - While the command is running, detach screen and restart nscd
-# - Reattach screen and continue execution (interactive mode)
-# - Run "cat /tmp/apparmor.d/usr.sbin.nscd" and check the output for a set of
-# parameters
-# - Run function "aa_tmp_prof_verify" (check if program is able to start using
-# the temporary profiles)
-# - Clean the temporary profiles directory
-# Maintainer: llzhao <llzhao@suse.com>
+# Summary: Test the profile generation utility of Apparmor
+# Maintainer: Wes <whdu@suse.com>
 # Tags: poo#36886, poo#45803
 
 use strict;

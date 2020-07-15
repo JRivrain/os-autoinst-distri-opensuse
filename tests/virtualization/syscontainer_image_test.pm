@@ -15,7 +15,6 @@ use testapi;
 use strict;
 use warnings;
 use version_utils 'is_sle';
-use utils;
 
 sub run() {
     select_console 'root-console';
@@ -23,7 +22,7 @@ sub run() {
     return if is_sle && !(get_var('SCC_REGCODE') || get_var('HDD_SCC_REGISTERED'));
 
     # Check the repositories on the host first
-    zypper_call("lr");
+    assert_script_run("zypper lr");
 
     my $url    = get_required_var('SYSCONTAINER_IMAGE_URL');
     my $rootfs = '/tmp/rootfs';

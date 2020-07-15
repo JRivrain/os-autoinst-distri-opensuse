@@ -12,17 +12,9 @@
 #
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, see <http://www.gnu.org/licenses/>.
-
-# Summary: Single testcase for AppArmor that guesses basic profile requirements
-# for nscd and pam using aa_autodep.
-# - Create a temporary profile for nscd in "/tmp/apparmor.d" using
-# "aa-autodep -d $aa_tmp_prof/ nscd"
-# - Check if "/tmp/apparmor.d/usr.sbin.nscd" contains required fields
-# - Create a temporaty profile for /usr/bin/pam*
-# - Output created pam profile to serial output
-# - Disable temporarily created nscd profile
-# - Cleanup temporary profiles
-# Maintainer: llzhao <llzhao@suse.com>
+#
+# Summary: Guess basic AppArmor profile requirements with aa_autodep
+# Maintainer: Wes <whdu@suse.com>
 # Tags: poo#36889, poo#45803
 
 use base 'apparmortest';
@@ -57,7 +49,7 @@ sub run {
                 key    => 'c',
             },
         ],
-        60
+        30
     );
 
     # Output generated profiles list to serial console

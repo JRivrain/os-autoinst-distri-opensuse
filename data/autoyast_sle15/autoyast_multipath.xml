@@ -144,7 +144,8 @@ pre init scripts feature. See poo#20818.
       <hostname>vtest3</hostname>
       <domain>suse.de</domain>
       <nameservers config:type="list">
-        <nameserver>10.0.2.3</nameserver>
+        <nameserver>8.8.8.8</nameserver>
+        <nameserver></nameserver>
       </nameservers>
       <searchlist config:type="list">
       </searchlist>
@@ -270,7 +271,7 @@ pre init scripts feature. See poo#20818.
           <crypt_fs config:type="boolean">false</crypt_fs>
           <filesystem config:type="symbol">xfs</filesystem>
           <format config:type="boolean">true</format>
-          <fstopt>noatime,inode64</fstopt>
+          <fstopt>noatime,nobarrier,inode64</fstopt>
           <loop_fs config:type="boolean">false</loop_fs>
           <lv_name>lvroot</lv_name>
           <mount>/</mount>
@@ -284,7 +285,7 @@ pre init scripts feature. See poo#20818.
           <crypt_fs config:type="boolean">false</crypt_fs>
           <filesystem config:type="symbol">xfs</filesystem>
           <format config:type="boolean">true</format>
-          <fstopt>noatime,inode64</fstopt>
+          <fstopt>noatime,nobarrier,inode64</fstopt>
           <loop_fs config:type="boolean">false</loop_fs>
           <lv_name>lvopt</lv_name>
           <mount>/opt</mount>
@@ -298,7 +299,7 @@ pre init scripts feature. See poo#20818.
           <crypt_fs config:type="boolean">false</crypt_fs>
           <filesystem config:type="symbol">xfs</filesystem>
           <format config:type="boolean">true</format>
-          <fstopt>noatime,inode64</fstopt>
+          <fstopt>noatime,nobarrier,inode64</fstopt>
           <loop_fs config:type="boolean">false</loop_fs>
           <lv_name>lvvar</lv_name>
           <mount>/var</mount>
@@ -312,7 +313,7 @@ pre init scripts feature. See poo#20818.
           <crypt_fs config:type="boolean">false</crypt_fs>
           <filesystem config:type="symbol">xfs</filesystem>
           <format config:type="boolean">true</format>
-          <fstopt>noatime,nodev,inode64</fstopt>
+          <fstopt>noatime,nobarrier,nodev,inode64</fstopt>
           <loop_fs config:type="boolean">false</loop_fs>
           <lv_name>lvhome</lv_name>
           <mount>/home</mount>
@@ -326,7 +327,7 @@ pre init scripts feature. See poo#20818.
           <crypt_fs config:type="boolean">false</crypt_fs>
           <filesystem config:type="symbol">xfs</filesystem>
           <format config:type="boolean">true</format>
-          <fstopt>noatime,nodev,nosuid,noexec,inode64</fstopt>
+          <fstopt>noatime,nobarrier,nodev,nosuid,noexec,inode64</fstopt>
           <loop_fs config:type="boolean">false</loop_fs>
           <lv_name>lvtmp</lv_name>
           <mount>/tmp</mount>
@@ -393,8 +394,6 @@ pre init scripts feature. See poo#20818.
       <package>vsftpd</package>
       <package>xauth</package>
       <package>xterm</package>
-      <package>yast2-kdump</package>
-      <package>yast2-mail</package>
     </packages>
     <patterns config:type="list">
       <pattern>base</pattern>
@@ -580,7 +579,7 @@ if [ -e /sys/firmware/efi ]; then
 else
       sed -i -e 's/BOOTFSTYPE/xfs/g' \
              -e 's/BOOTMOUNTP/\/boot/g' \
-             -e 's/BOOTMOUNTO/nodev,nosuid/g' \
+             -e 's/BOOTMOUNTO/nobarrier,nodev,nosuid/g' \
              -e 's/6878/131/g' /tmp/profile/modified.xml
 fi
 ]]>

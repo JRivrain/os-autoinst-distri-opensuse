@@ -22,7 +22,6 @@ use strict;
 use warnings;
 use testapi;
 use utils;
-use version_utils;
 
 sub run {
     my ($self) = @_;
@@ -35,12 +34,13 @@ sub run {
     assert_script_run "ssh-keygen -t rsa -P '' -C 'localhost' -f ~/.ssh/id_rsa";
 
     # Configure the Master socket
-    assert_script_run "echo 'StrictHostKeyChecking no
-    HostKeyAlgorithms ssh-rsa' > ~/.ssh/config";
+    assert_script_run "echo 'ControlMaster auto
+    ControlPath ~/.ssh/ssh_%r_%h_%p
+    ControlPersist 86400' > ~/.ssh/config";
 
     # Exchange SSH keys
     assert_script_run "ssh-keyscan $hypervisor > ~/.ssh/known_hosts";
-    exec_and_insert_password "ssh-copy-id root\@$hypervisor";
+    exec_and_insert_password "ssh-copy-id -f root\@$hypervisor";
 
     # Test the connection
     assert_script_run "ssh root\@$hypervisor hostname -f";
@@ -48,10 +48,6 @@ sub run {
     # Copy that also for normal user
     assert_script_run "install -o $testapi::username -g users -m 0700 -d /home/$testapi::username/.ssh";
     assert_script_run "install -o $testapi::username -g users -m 0600 ~/.ssh/config ~/.ssh/id_rsa ~/.ssh/id_rsa.pub ~/.ssh/known_hosts /home/$testapi::username/.ssh/";
-
-    my ($sles_running_version, $sles_running_sp) = get_sles_release();
-    zypper_call("ar --refresh http://download.suse.de/ibs/SUSE:/CA/SLE_" . $sles_running_version . "/SUSE:CA.repo");
-    zypper_call("in ca-certificates-suse");
 }
 
 sub test_flags {

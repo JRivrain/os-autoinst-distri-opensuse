@@ -12,7 +12,7 @@
 # Maintainer: soulofdestiny <mgriessmeier@suse.com>
 # Tags: https://fate.suse.com/316379, https://progress.opensuse.org/issues/20308
 
-use base 'hpcbase';
+use base "hpcbase";
 use strict;
 use warnings;
 use testapi;
@@ -29,13 +29,7 @@ sub run {
     # install slurm-node if sle15, not available yet for sle12
     zypper_call('in slurm-node') if is_sle '15+';
 
-    if (get_required_var('EXT_HPC_TESTS')) {
-        zypper_call('in openmpi3 pmix openmpi3-gnu-hpc');
-    }
-
-    barrier_wait('CLUSTER_PROVISIONED');
     barrier_wait("SLURM_SETUP_DONE");
-    barrier_wait('SLURM_SETUP_DBD');
     barrier_wait("SLURM_MASTER_SERVICE_ENABLED");
 
     # enable and start munge

@@ -1,4 +1,4 @@
-# Copyright (C) 2017-2020 SUSE LLC
+# Copyright (C) 2017-2018 SUSE LLC
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -37,7 +37,6 @@ our @EXPORT = qw(
   check_rollback_system
   reset_consoles_tty
   boot_into_ro_snapshot
-  set_scc_proxy_url
 );
 
 sub setup_sle {
@@ -87,14 +86,7 @@ sub register_system_in_textmode {
     # that do not show license agreement during installation but do when registering
     # after install
     set_var('IN_PATCH_SLE', 1);
-    # To register the product and addons via commands, only for sle 12+
-    if (get_var('ADDON_REGBYCMD') && is_sle('12+')) {
-        register_product();
-        register_addons_cmd();
-    }
-    else {
-        yast_scc_registration();
-    }
+    yast_scc_registration;
     # Once SCC registration is done, disable IN_PATCH_SLE so it does not interfere
     # with further calls to accept_addons_license (in upgrade for example)
     set_var('IN_PATCH_SLE', 0);
@@ -106,14 +98,8 @@ sub remove_ltss {
     if (get_var('SCC_ADDONS', '') =~ /ltss/) {
         my $scc_addons = get_var_array('SCC_ADDONS');
         record_info 'remove ltss', 'got all updates from ltss channel, now remove ltss and drop it from SCC_ADDONS before migration';
-        if (check_var('SLE_PRODUCT', 'hpc')) {
-            remove_suseconnect_product('SLE_HPC-LTSS');
-        } elsif (is_sle('15+') && check_var('SLE_PRODUCT', 'sles')) {
-            remove_suseconnect_product('SLES-LTSS');
-        } else {
-            zypper_call 'rm -t product SLES-LTSS';
-            zypper_call 'rm sles-ltss-release-POOL';
-        }
+        zypper_call 'rm -t product SLES-LTSS';
+        zypper_call 'rm sles-ltss-release-POOL';
         set_var('SCC_ADDONS', join(',', grep { $_ ne 'ltss' } @$scc_addons));
     }
 }
@@ -133,11 +119,10 @@ sub disable_installation_repos {
 # Record disk info to help debug diskspace exhausted
 # issue during upgrade
 sub record_disk_info {
-    my $out = script_output 'findmnt -n -o fstype /';
-    if ($out =~ /btrfs/) {
+    if (get_var('FILESYSTEM', 'btrfs') =~ /btrfs/) {
         assert_script_run 'btrfs filesystem df / | tee /tmp/btrfs-filesystem-df.txt';
         assert_script_run 'btrfs filesystem usage / | tee /tmp/btrfs-filesystem-usage.txt';
-        assert_script_run('snapper list | tee /tmp/snapper-list.txt', 180) unless (is_sles4sap());
+        assert_script_run 'snapper list | tee /tmp/snapper-list.txt' unless (is_sles4sap());
         upload_logs '/tmp/btrfs-filesystem-df.txt';
         upload_logs '/tmp/btrfs-filesystem-usage.txt';
         upload_logs '/tmp/snapper-list.txt' unless (is_sles4sap());
@@ -161,21 +146,18 @@ sub check_rollback_system {
     # Check SUSEConnect status for SLE
     # check rollback-helper service is enabled and worked properly
     # If rollback service is activating, need wait some time
-    # Add wait in a loop, max time is 10 minute, because case with much more modules need more time
-    for (1 .. 10) {
+    # Add wait in a loop, max time is 5 minute, because case with much more modules need more time
+    for (1 .. 5) {
         last unless script_run('systemctl --no-pager status rollback') != 0;
         sleep 60;
     }
     systemctl('is-active rollback');
 
     # Disable the obsolete cd and dvd repos to avoid zypper error
-    zypper_call("mr -d -m cd -m dvd");
+    assert_script_run("zypper mr -d -m cd -m dvd");
     # Verify registration status matches current system version
     # system is un-registered during media based upgrade
-    unless (get_var('MEDIA_UPGRADE')) {
-        my $py = (-e '/usr/bin/python3') ? 'python3' : 'python';
-        assert_script_run('curl -s ' . data_url('console/check_registration_status.py') . ' | ' . $py);
-    }
+    assert_script_run('curl -s ' . data_url('console/check_registration_status.py') . ' | python') unless get_var('MEDIA_UPGRADE');
 }
 
 # Reset tty for x11 and root consoles
@@ -204,14 +186,6 @@ sub boot_into_ro_snapshot {
         }
         die "Boot into read-only snapshot failed over 5 minutes, considering a product issue";
     }
-}
-
-# Register the already installed system on a specific SCC server/proxy if needed
-sub set_scc_proxy_url {
-    if (my $u = get_var('SCC_PROXY_URL')) {
-        type_string "echo 'url: $u' > /etc/SUSEConnect\n";
-    }
-    save_screenshot;
 }
 
 1;

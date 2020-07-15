@@ -11,11 +11,11 @@
 # Summary: Support for the new tests for yast command line
 # Maintainer: Ancor Gonzalez Sosa <ancor@suse.de>
 
-use base "y2_module_consoletest";
+use base "console_yasttest";
 use strict;
 use warnings;
 use testapi;
-use utils qw(zypper_call systemctl);
+use utils 'zypper_call';
 use repo_tools 'prepare_source_repo';
 
 # Executes the command line tests from a yast repository (in master or in the
@@ -24,8 +24,8 @@ sub run_yast_cli_test {
     my ($packname) = @_;
     my $PACKDIR = '/usr/src/packages';
 
-    zypper_call "in $packname";
-    zypper_call "si $packname";
+    assert_script_run "zypper -n in $packname";
+    assert_script_run "zypper -n si $packname";
     assert_script_run "rpmbuild -bp $PACKDIR/SPECS/$packname.spec";
     script_run "pushd $PACKDIR/BUILD/$packname-*";
 
@@ -44,14 +44,14 @@ sub run_yast_cli_test {
 
 sub run {
     select_console 'root-console';
-    die "wicked is not used. The yast2_network tests can run only against wicked." if (systemctl("status wicked.service", ignore_failure => 1) != 0);
+
     prepare_source_repo;
 
     # Install test requirement
-    zypper_call 'in rpm-build';
+    assert_script_run 'zypper -n in rpm-build';
 
     # Enable source repo
-    zypper_call 'mr -e repo-source';
+    assert_script_run 'zypper mr -e repo-source';
 
     # Run YaST CLI tests
     run_yast_cli_test('yast2-network');

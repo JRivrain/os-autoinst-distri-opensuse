@@ -1,4 +1,4 @@
-# Copyright (C) 2015-2019 SUSE LLC
+# Copyright (C) 2015-2018 SUSE LLC
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -14,24 +14,6 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 
 # Summary: supportserver and supportserver generator implementation
-# - Configure a static network at "10.0.2.1" and check if it is working
-# - Configure network and enable nat
-# - Setup dhcp server if necessary
-# - Setup pxe server if necessary
-# - Setup tftp server if necessary
-# - Setup http server if necessary
-# - Setup dns server if necessary
-# - Setup autoyast tests if necessary
-# - Setup ntp server if necessary
-# - Setup xvnc server if necessary
-# - Setup ssh server if necessary
-# - Setup xdmcp server if necessary
-# - Setup iscsi server if necessary
-# - Setup iscsi target server if necessary
-# - Setup stunnel server if necessary
-# - Setup mariadb server if necessary
-# - Setup nfs server if necessary
-# - Create locks for each server created
 # Maintainer: Pavel Sladek <psladek@suse.com>
 
 use strict;
@@ -45,43 +27,32 @@ use mm_tests;
 use opensusebasetest 'firewall';
 use registration 'scc_version';
 use iscsi;
-use version_utils 'is_opensuse';
 
 my $pxe_server_set       = 0;
+my $quemu_proxy_set      = 0;
 my $http_server_set      = 0;
 my $ftp_server_set       = 0;
 my $tftp_server_set      = 0;
 my $dns_server_set       = 0;
 my $dhcp_server_set      = 0;
+my $nfs_mount_set        = 0;
 my $ntp_server_set       = 0;
 my $xvnc_server_set      = 0;
 my $ssh_server_set       = 0;
 my $xdmcp_server_set     = 0;
 my $iscsi_server_set     = 0;
 my $iscsi_tgt_server_set = 0;
-my $nfs_server_set       = 0;
 
 my $setup_script;
 my $disable_firewall = 0;
+
+my @mutexes;
 
 sub setup_pxe_server {
     return if $pxe_server_set;
 
     $setup_script .= "curl -f -v " . autoinst_url . "/data/supportserver/pxe/setup_pxe.sh  > setup_pxe.sh\n";
-    my $ckrnl;
-    if ($ckrnl = get_var('SUPPORT_SERVER_PXE_CUSTOMKERNEL')) {
-        # -C option value: normalize possible default settings "1" "yes" "YES"
-        $ckrnl = "" if ($ckrnl =~ /^(yes|1)$/i);
-        # other settings constitute explicit command line parts (device, kernel etc.)
-        $setup_script .= "/bin/bash -ex setup_pxe.sh -C $ckrnl\n";
-
-        # For later. pxe_customkrnl.sh to be executed only when the custom kernel
-        # actually becomes available. See custom_pxeboot.pm
-        $setup_script .= "curl -f -v " . autoinst_url . "/data/supportserver/pxe/pxe_customkrnl.sh > pxe_customkrnl.sh\n";
-    }
-    else {
-        $setup_script .= "/bin/bash -ex setup_pxe.sh\n";
-    }
+    $setup_script .= "/bin/bash -ex setup_pxe.sh\n";
 
     $pxe_server_set = 1;
 }
@@ -104,10 +75,8 @@ sub setup_ftp_server {
 
 sub setup_tftp_server {
     return if $tftp_server_set;
-    # atftpd is available only on older products (e.g.: present on SLE-12, gone on SLE-15)
-    # FIXME: other options besides RPMs atftp, tftp not considered. For SLE-15 this is enough.
-    my $tftp_service = script_output("rpm --quiet -q atftp && echo atftpd || echo tftp", type_command => 1);
-    $setup_script .= "systemctl restart $tftp_service\n";
+
+    $setup_script .= "systemctl restart atftpd\n";
 
     $tftp_server_set = 1;
 }
@@ -223,15 +192,7 @@ sub dhcpd_conf_generation {
             }
         }
         if ($pxe) {
-            # Only atftpd can handle subdirs, tftp (>= SLE-15) cannot.
-            # setup_pxe.sh (see sub setup_pxe_server() above) will take care
-            # to actually install pxelinux.0 correctly.
-            #
-            # FIXME: again, other TFTP servers besides atftpd, tftp not considered.
-            my $pxe_loader = script_output(
-                "rpm --quiet -q atftp && echo '/boot/pxelinux.0' || echo 'pxelinux.0'",
-                type_command => 1);
-            $setup_script .= "  filename \"$pxe_loader\";\n";
+            $setup_script .= "  filename \"/boot/pxelinux.0\";\n";
             $setup_script .= "  next-server $server_ip;\n";
         }
         $setup_script .= "}\n";
@@ -264,6 +225,13 @@ sub setup_dhcp_server {
     $setup_script .= "systemctl start dhcpd\n";
 
     $dhcp_server_set = 1;
+}
+
+sub setup_nfs_mount {
+    return if $nfs_mount_set;
+
+
+    $nfs_mount_set = 1;
 }
 
 sub setup_ssh_server {
@@ -457,17 +425,11 @@ sub setup_iscsi_tgt_server {
     tgt_new_target(1, $iqn);
     # Add device lun 1 to target with id 1
     tgt_new_lun(1, 1, "$device");
-    # Export same device three times with same scsi_id for multipath test
+    # Export same device twice with same scsi_id for multipath test
     if (get_var('ISCSI_MULTIPATH')) {
         tgt_new_lun(1, 2, "$device");
-        tgt_new_lun(1, 3, "$device");
         tgt_update_lun_params(1, 1, "scsi_id=\"mpatha\"");
         tgt_update_lun_params(1, 2, "scsi_id=\"mpatha\"");
-        tgt_update_lun_params(1, 3, "scsi_id=\"mpatha\"");
-        # Download and prepare LUN disturber for later use (flaky_mp_iscsi.pm)
-        $setup_script .= "curl -f -v " . autoinst_url
-          . "/data/supportserver/iscsi/multipath_flaky_luns.sh >/usr/local/bin/multipath_flaky_luns.sh \n"
-          . "chmod +x /usr/local/bin/multipath_flaky_luns.sh";
     }
     # Authorize all clients
     tgt_auth_all(1);
@@ -539,29 +501,6 @@ sub setup_mariadb_server {
     $disable_firewall = 1;
 }
 
-sub setup_nfs_server {
-    my $nfs_mount       = "/nfs/shared";
-    my $nfs_permissions = "rw,sync,no_root_squash";
-
-    # Added as the client test code might want to change the default
-    # values
-    if (get_var("CONFIGURE_NFS_SERVER")) {
-        $nfs_mount       = get_required_var("NFS_MOUNT");
-        $nfs_permissions = get_required_var("NFS_PERMISSIONS");
-    }
-
-    systemctl("start rpcbind");
-    systemctl("start nfs-server");
-    assert_script_run("nfsstat –s");
-    assert_script_run("mkdir -p $nfs_mount");
-    assert_script_run("chmod 777 $nfs_mount");
-    assert_script_run("echo $nfs_mount 10.0.2.2/24\\($nfs_permissions\\) >> /etc/exports");
-    assert_script_run("exportfs -r");
-    systemctl("restart nfs-server");
-    systemctl("restart rpcbind");
-    systemctl("is-active nfs-server -a rpcbind");
-}
-
 sub run {
     configure_static_network('10.0.2.1/24');
 
@@ -581,13 +520,16 @@ sub run {
         setup_dhcp_server((exists $server_roles{dns}), 1);
         setup_pxe_server();
         setup_tftp_server();
+        push @mutexes, 'pxe';
     }
     if (exists $server_roles{tftp}) {
         setup_tftp_server();
+        push @mutexes, 'tftp';
     }
 
     if (exists $server_roles{dhcp}) {
         setup_dhcp_server((exists $server_roles{dns}), 0);
+        push @mutexes, 'dhcp';
     }
     if (exists $server_roles{qemuproxy}) {
         setup_http_server();
@@ -598,45 +540,53 @@ sub run {
           . autoinst_url
           . "|g' >/etc/apache2/vhosts.d/proxy.conf\n";
         $setup_script .= "systemctl restart apache2\n";
+        push @mutexes, 'qemuproxy';
     }
     if (exists $server_roles{dns}) {
         setup_dns_server();
+        push @mutexes, 'dns';
     }
 
     if (exists $server_roles{aytests}) {
         setup_aytests();
+        push @mutexes, 'aytests';
     }
 
     if (exists $server_roles{ntp}) {
         setup_ntp_server();
+        push @mutexes, 'ntp';
     }
 
     if (exists $server_roles{xvnc}) {
         setup_xvnc_server();
+        push @mutexes, 'xvnc';
     }
 
     if (exists $server_roles{ssh}) {
         setup_ssh_server();
+        push @mutexes, 'ssh';
     }
 
     if (exists $server_roles{xdmcp}) {
         setup_xdmcp_server();
+        push @mutexes, 'xdmcp';
     }
 
     if (exists $server_roles{iscsi}) {
         setup_iscsi_server();
+        push @mutexes, 'iscsi';
     }
     if (exists $server_roles{iscsi_tgt}) {
         setup_iscsi_tgt_server();
+        push @mutexes, 'iscsi_tgt';
     }
     if (exists $server_roles{stunnel}) {
         setup_stunnel_server;
+        push @mutexes, 'stunnel';
     }
     if (exists $server_roles{mariadb}) {
         setup_mariadb_server;
-    }
-    if (exists $server_roles{nfs}) {
-        setup_nfs_server();
+        push @mutexes, 'mariadb';
     }
 
     die "no services configured, SUPPORT_SERVER_ROLES variable missing?" unless $setup_script;
@@ -647,7 +597,9 @@ sub run {
     assert_script_run opensusebasetest::firewall . ' stop' if $disable_firewall;
 
     # Create mutexes for running services
-    mutex_create($_) foreach (keys %server_roles);
+    foreach my $mutex (@mutexes) {
+        mutex_create($mutex);
+    }
 
     # Create a *last* mutex to signal that support_server initialization is done
     mutex_create('support_server_ready');

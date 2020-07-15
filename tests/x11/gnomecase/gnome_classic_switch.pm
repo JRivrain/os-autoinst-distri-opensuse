@@ -8,16 +8,6 @@
 # without any warranty.
 
 # Summary: Gnome: switch between gnome(now default is sle-classic) and gnome-classic
-# - On display manager, switch to gnome classic
-# - Launch gnome-terminal
-# - Close gnome-terminal
-# - Launch xterm and check
-# - Close xterm
-# - Swich back to default session
-# - Launch gnome-terminal
-# - Close gnome-terminal
-# - Launch xterm and check
-# - Close xterm
 # Maintainer: xiaojun <xjin@suse.com>
 # Tags: tc#5255-1503849
 
@@ -35,9 +25,14 @@ sub application_test {
     send_key "ret";
     wait_still_screen;
 
-    x11_start_program('xterm');
-    assert_screen 'xterm';
+    x11_start_program('firefox');
+    $self->firefox_check_default;
+    $self->firefox_check_popups;
+    assert_screen "firefox-gnome", 150;
     send_key "alt-f4";
+    wait_still_screen;
+    send_key "ret";
+    wait_still_screen;
 
 }
 

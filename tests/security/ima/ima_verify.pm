@@ -15,7 +15,7 @@
 #
 # Summary: Test IMA verify function provided by evmctl
 # Note: This case should come after 'ima_apprasial_digital_signatures'
-# Maintainer: llzhao <llzhao@suse.com>
+# Maintainer: wnereiz <wnereiz@member.fsf.org>
 # Tags: poo#49562
 
 use base "opensusebasetest";

@@ -9,39 +9,27 @@
 
 # Summary: Test Salt stack on two machines. This machine is running
 #  salt-minion only and here we test the end result of master operations.
-# - Install salt-minion
-#   - Set hostname
-#   - Enable debug
-#   - Enable, start and check salt-minion service
-# - Both machines are ready
-# - Wait for the keys to be accepted
-# - Check that the command executed from the master was successfully done
-# - Check that the package installed from the master is present
-# - Check that the user and it's group created from the master are present
-# - Check that the sysctl value set from the master has right value
-# - Stop the minion at the end
 # Maintainer: Pavel Dostal <pdostal@suse.cz>
 
-use base "saltbase";
+use base "consoletest";
 use strict;
 use warnings;
 use testapi;
 use lockapi;
-use mm_network 'setup_static_mm_network';
+use y2x11test 'setup_static_mm_network';
+use utils qw(zypper_call systemctl);
 
 sub run {
-    my $self = shift;
     select_console 'root-console';
 
-    # Install, configure and start the salt minion
-    $self->minion_prepare();
+    # Install the salt minion, set the address of the master and start it
+    zypper_call('in salt-minion');
+    assert_script_run('sed -i -e "s/#master: salt/master: 10.0.2.101/" /etc/salt/minion');
+    systemctl("start salt-minion");
+    systemctl("status salt-minion");
 
-    # Both machines are ready
+    # before accepting the key, wait until the minion is fully started (systemd might be not reliable)
     barrier_wait 'SALT_MINIONS_READY';
-
-    # Wait for the keys to be accepted
-    mutex_wait 'SALT_KEYS_ACCEPTED';
-    assert_script_run('salt-call test.ping', timeout => 360);
 
     # Check that the command executed from the master was successfully done
     mutex_wait 'SALT_TOUCH';
@@ -50,7 +38,6 @@ sub run {
     # Check that the package installed from the master is present
     mutex_wait 'SALT_STATES_PKG';
     assert_script_run("which pidstat");
-    assert_script_run("pidstat");
 
     # Check that the user and it's group created from the master are present
     mutex_wait 'SALT_STATES_USER';
@@ -61,11 +48,10 @@ sub run {
     # Check that the sysctl value set from the master has right value
     mutex_wait 'SALT_STATES_SYSCTL';
     assert_script_run("sysctl -a | grep 'net.ipv4.ip_forward = 1'");
-    assert_script_run("cat /proc/sys/net/ipv4/ip_forward");
 
     # Stop the minion at the end
     barrier_wait 'SALT_FINISHED';
-    $self->stop();
+    systemctl 'stop salt-minion';
 }
 
 1;

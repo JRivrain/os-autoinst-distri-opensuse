@@ -14,7 +14,7 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 #
 # Summary: Make sure the nproc limits are not set in limits.conf
-# Maintainer: llzhao <llzhao@suse.com>
+# Maintainer: wnereiz <wnereiz@member.fsf.org>
 # Tags: poo#43724
 
 use base "opensusebasetest";

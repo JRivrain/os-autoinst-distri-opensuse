@@ -14,7 +14,7 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 #
 # Summary: Test SCAP source data stream
-# Maintainer: llzhao <llzhao@suse.com>
+# Maintainer: Wes <whdu@suse.com>
 # Tags: poo#36910, tc#1621172
 
 use base 'consoletest';

@@ -11,7 +11,7 @@
 #          https://progress.opensuse.org/issues/16402
 # Maintainer: Jozef Pupava <jpupava@suse.com>
 
-use base qw(y2_installbase y2_module_guitest);
+use base qw(y2logsstep y2x11test);
 use strict;
 use warnings;
 use testapi;
@@ -23,25 +23,21 @@ use x11utils 'turn_off_gnome_screensaver';
 Define proxy SCC. For SLE 15 we need to clean existing registration
 =cut
 sub test_setup {
-    x11_start_program('xterm');
-    turn_off_gnome_screensaver;
-    become_root;
-    # We use image which is registered, so remove previous registration first
+    select_console 'root-console';
     if (is_sle('>=15')) {
         cleanup_registration();
     }
-
-    my @addon_proxy = ('url: http://' . (is_sle('<15') ? 'server-' : 'all-') . get_var('BUILD_SLE'));
-    # Add every used addon to regurl for proxy SCC, sle12 addons can have different build numbers
-    if (get_var('SCC_ADDONS') && is_sle('<15')) {
+    elsif (get_var('SCC_ADDONS')) {
+        # Add every used addon to regurl for proxy SCC
+        my @addon_proxy = ("url: http://server-" . get_var('BUILD_SLE'));
         for my $addon (split(/,/, get_var('SCC_ADDONS', ''))) {
             my $uc_addon = uc $addon;    # change to uppercase to match variable
             push(@addon_proxy, "\b.$addon-" . get_var("BUILD_$uc_addon"));
         }
+        assert_script_run "echo \"@addon_proxy.proxy.scc.suse.de\" > /etc/SUSEConnect";    # Define proxy SCC
     }
-
-    assert_script_run "echo \"@addon_proxy.proxy.scc.suse.de\" > /etc/SUSEConnect";    # Define proxy SCC
-    wait_screen_change(sub { type_string "exit\n" }, 5) for (1 .. 2);
+    turn_off_gnome_screensaver;
+    select_console 'x11';
 }
 
 sub run {
@@ -62,11 +58,6 @@ sub post_fail_hook {
     $self->SUPER::post_fail_hook;
     verify_scc;
     investigate_log_empty_license;
-}
-
-sub test_flags {
-    # add milestone flag to save setup in lastgood VM snapshot
-    return {fatal => 1, milestone => 1};
 }
 
 1;

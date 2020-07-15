@@ -20,7 +20,6 @@ use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC);
 use serial_terminal;
 use Mojo::File 'path';
 use Mojo::JSON;
-use LTP::WhiteList 'override_known_failures';
 require bmwqemu;
 
 sub start_result {
@@ -200,7 +199,6 @@ sub record_ltp_result {
         close $fh;
         push @{$self->{details}}, $details;
 
-        $self->{result} = 'fail';
         $export_details->{test}->{result} = 'timeout';
         return (1, $export_details);
     }
@@ -273,35 +271,18 @@ sub thetime {
     return clock_gettime(CLOCK_MONOTONIC);
 }
 
-sub pre_run_hook {
-    my ($self) = @_;
-    my @pattern_list;
-
-    # Kernel error messages should be treated as soft-fail in boot_ltp,
-    # install_ltp and shutdown_ltp so that at least some testing can be done.
-    # But change them to hard fail in this test module.
-    for my $pattern (@{$self->{serial_failures}}) {
-        my %tmp = %$pattern;
-        $tmp{type} = 'hard' if $tmp{message} =~ m/kernel/i;
-        push @pattern_list, \%tmp;
-    }
-
-    $self->{serial_failures} = \@pattern_list;
-}
-
 sub run {
     my ($self, $tinfo) = @_;
-    die 'Need LTP_COMMAND_FILE to know which tests to run' unless $tinfo && $tinfo->runfile;
-    my $runfile            = $tinfo->runfile;
-    my $timeout            = get_var('LTP_TIMEOUT') || 900;
-    my $is_posix           = $runfile =~ m/^\s*openposix\s*$/i;
+    my $cmd_file = get_var 'LTP_COMMAND_FILE';
+    die 'Need LTP_COMMAND_FILE to know which tests to run' unless $cmd_file;
+    my $timeout  = get_var('LTP_TIMEOUT') || 900;
+    my $is_posix = $cmd_file =~ m/^\s*openposix\s*$/i;
+
+    unless (defined $tinfo) {
+        die 'Require LTP::TestInfo object from loadtest with LTP test case name and command line';
+    }
     my $test_result_export = $tinfo->test_result_export;
     my $test               = $tinfo->test;
-    my %env                = %{$test_result_export->{environment}};
-
-    $env{retval}       = 'undefined';
-    $self->{ltp_env}   = \%env;
-    $self->{ltp_tinfo} = $tinfo;
 
     my $fin_msg    = "### TEST $test->{name} COMPLETE >>> ";
     my $cmd_text   = qq($test->{command}; echo "$fin_msg\$?");
@@ -325,11 +306,7 @@ sub run {
         type_string("($cmd_text) | tee /dev/$serialdev\n");
     }
     my $test_log = wait_serial(qr/$fin_msg\d+/, $timeout, 0, record_output => 1);
-    my ($timed_out, $result_export) = $self->record_ltp_result($runfile, $test, $test_log, $fin_msg, thetime() - $start_time, $is_posix);
-
-    if ($test_log =~ qr/$fin_msg(\d+)$/) {
-        $env{retval} = $1;
-    }
+    my ($timed_out, $result_export) = $self->record_ltp_result($cmd_file, $test, $test_log, $fin_msg, thetime() - $start_time, $is_posix);
 
     push(@{$test_result_export->{results}}, $result_export);
     if ($timed_out) {
@@ -351,11 +328,6 @@ sub run_post_fail {
     my ($self, $msg) = @_;
 
     $self->fail_if_running();
-
-    if ($self->{ltp_tinfo} and get_var('LTP_KNOWN_ISSUES') and $self->{result} eq 'fail') {
-        override_known_failures($self, $self->{ltp_env}, $self->{ltp_tinfo}->runfile, $self->{ltp_tinfo}->test->{name});
-    }
-
     if ($msg =~ qr/died/) {
         die $msg . "\n";
     }
@@ -403,8 +375,7 @@ START_AFTER_TEST=install_ltp
 
 Either specifies the name of an LTP runfile from the runtest directory or
 'openposix'. When set to openposix it will load openposix_test_list.txt which
-is created by install_ltp.pm. Multiple runfiles separated by comma are also
-supported.
+is created by install_ltp.pm.
 
 =head2 LTP_COMMAND_PATTERN
 
@@ -437,7 +408,7 @@ E.g.: key=value,key2="value with spaces",key3='another value with spaces'
 
 The runtest asset files are appended with git or pkg depending on how LTP was
 installed. By default the runtest files from the git installation will be
-used, but setting this variable to pkg allows that behavior to be overridden.
+uesd, but setting this variable to pkg allows that behavior to be overridden.
 
 =cut
 

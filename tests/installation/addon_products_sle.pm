@@ -1,7 +1,7 @@
 # SUSE's openQA tests
 #
 # Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2020 SUSE LLC
+# Copyright © 2012-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -13,12 +13,12 @@
 
 use strict;
 use warnings;
-use base 'y2_installbase';
+use base "y2logsstep";
 use testapi;
 use utils qw(addon_license handle_untrusted_gpg_key assert_screen_with_soft_timeout);
 use version_utils 'is_sle';
 use qam 'advance_installer_window';
-use registration qw(%SLE15_DEFAULT_MODULES rename_scc_addons @SLE15_ADDONS_WITHOUT_LICENSE skip_package_hub_if_necessary);
+use registration qw(%SLE15_DEFAULT_MODULES rename_scc_addons @SLE15_ADDONS_WITHOUT_LICENSE);
 use LWP::Simple 'head';
 
 sub handle_all_packages_medium {
@@ -31,12 +31,10 @@ sub handle_all_packages_medium {
     my @addons   = split(/,/, $SLE15_DEFAULT_MODULES{$sle_prod});
 
     # According to installation guide, select a sle product is mandatory
-    # (from sle15-SP2 this is not true)
     # when install with the all-packages media, so add the base product
-    # (sles/sled/etc) as a fake addon.
-    unless (is_sle('15-SP2+')) {
-        push @addons, $sle_prod if !grep(/^$sle_prod$/, @addons);
-    }
+    # (sles/sled/etc) as a fake addon
+    push @addons, $sle_prod if !grep(/^$sle_prod$/, @addons);
+
     # Select Desktop-Applications module if gnome is wanted
     push @addons, 'desktop' if check_var('DESKTOP', 'gnome') && !grep(/^desktop$/, @addons);
 
@@ -44,14 +42,17 @@ sub handle_all_packages_medium {
     # Refer to https://bugzilla.suse.com/show_bug.cgi?id=1078958#c4
     push @addons, 'we' if check_var('SLE_PRODUCT', 'sled') && !grep(/^we$/, @addons);
 
+    # Add python2 module, refer to https://jira.suse.de/browse/SLE-3167
+    push @addons, 'python2' if get_var('MEDIA_UPGRADE') && is_sle('<=15', get_var('HDDVERSION')) && !check_var('SLE_PRODUCT', 'rt');
+
     # For SLES12SPx and SLES11SPx to SLES15 migration, need add the demand module at least for media migration manually
     # Refer to https://fate.suse.com/325293
     if (get_var('MEDIA_UPGRADE') && is_sle('<15', get_var('HDDVERSION')) && !check_var('SLE_PRODUCT', 'sled')) {
         my @demand_addon = qw(desktop serverapp script);
         push @demand_addon, 'sdk'    if !check_var('SLE_PRODUCT', 'sles4sap');
         push @demand_addon, 'legacy' if !check_var('SLE_PRODUCT', 'rt');
-        for my $i (@demand_addon) {
-            push @addons, $i if !grep(/^$i$/, @addons);
+        for my $a (@demand_addon) {
+            push @addons, $a if !grep(/^$a$/, @addons);
         }
     }
     # In upgrade testing, the sle addons, including extensions and modules,
@@ -64,12 +65,9 @@ sub handle_all_packages_medium {
     # Read addons from SCC_ADDONS and add them to list
     # Make sure every addon only appears once in the list,
     # there will be problem to enable the same addon twice
-    for my $i (split(/,/, get_var('SCC_ADDONS', ''))) {
-        push @addons, $i if !grep(/^$i$/, @addons);
+    for my $a (split(/,/, get_var('SCC_ADDONS', ''))) {
+        push @addons, $a if !grep(/^$a$/, @addons);
     }
-
-    # Add python2 module, refer to https://jira.suse.de/browse/SLE-3167
-    push @addons, 'python2' if get_var('MEDIA_UPGRADE') && is_sle('<=15', get_var('HDDVERSION')) && is_sle('>15') && !check_var('SLE_PRODUCT', 'rt');
 
     # Record the addons to be enabled for debugging
     record_info 'Extension and Module Selection', join(' ', @addons);
@@ -77,17 +75,11 @@ sub handle_all_packages_medium {
     # Also record the addons which require license agreement
     my @addons_with_license = qw(ha we);
     my @addons_license_tags = ();
-    send_key_until_needlematch 'addon-base-activated', 'tab' if (check_var('VIDEOMODE', 'text'));
-    for my $i (@addons) {
-        next if (skip_package_hub_if_necessary($i));
-        push @addons_license_tags, "addon-license-$i" if grep(/^$i$/, @addons_with_license);
+    for my $a (@addons) {
+        push @addons_license_tags, "addon-license-$a" if grep(/^$a$/, @addons_with_license);
         send_key 'home';
-        send_key_until_needlematch ["addon-products-all_packages-$i-highlighted", "addon-products-all_packages-$i-selected"], "down", 30;
-        if (match_has_tag("addon-products-all_packages-$i-highlighted")) {
-            send_key 'spc';
-        } else {
-            record_info("Module preselected", "Module $i is already selected");
-        }
+        send_key_until_needlematch "addon-products-all_packages-$a-highlighted", 'down', 30;
+        send_key 'spc';
     }
     send_key $cmd{next};
     # Check the addon license agreement
@@ -110,9 +102,7 @@ sub handle_all_packages_medium {
       if @addons_license_tags && ($addon_license_num != scalar @addons_license_tags);
     assert_screen "addon-products-nonempty";
     # Confirm all required addons are properly added
-    send_key 'tab' if (check_var('VIDEOMODE', 'text'));
     foreach (@addons) {
-        next if (skip_package_hub_if_necessary($_));
         send_key 'home';
         send_key_until_needlematch "addon-products-$_", 'down';
     }
@@ -137,16 +127,26 @@ sub handle_addon {
     wait_still_screen 2;
     send_key_until_needlematch "addon-products-$addon", 'down', 30;
     # modules like SES or RT that are not part of Packages ISO don't have this step
-    send_key 'spc' if (is_sle('15+') && $addon !~ /^ses$|^rt$/);
-    # Return to top of the list
-    for (1 .. 15) { send_key 'pgup' }
+    if (is_sle('15+') && $addon !~ /^ses$|^rt$/) {
+        send_key 'spc';
+        wait_screen_change { send_key $cmd{next} };
+        assert_screen 'addon-product-installation';
+    }
 }
 
 sub test_addonurl {
-    my @test_modules = split(/,/, get_var('ADDONURL'));
+    my $testvalue = get_var('ADDONURL');
+    my @missing_modules;
+    my @test_modules = split(/,/, get_var('WORKAROUND_MODULES'));
 
     foreach (@test_modules) {
+        push @missing_modules, $_ unless ($testvalue =~ $_);
         die('URL ADDONURL_' . uc $_ . ' could not be accessed') unless head(get_var('ADDONURL_' . uc $_));
+    }
+
+    if (@missing_modules) {
+        my $str_missed_mod = join(',', @missing_modules);
+        die "Missing modules in ADDONURL which are set in WORKAROUND_MODULES: $str_missed_mod";
     }
 }
 
@@ -157,63 +157,43 @@ sub run {
         advance_installer_window('inst-addon');
         set_var('SKIP_INSTALLER_SCREEN', 0);
     }
-    # Trap the 'missing license file on media' issue
-    # Needle is configured as a workaround, so a soft-fail will be shown
-    send_key 'alt-s' if check_screen('license-insert-disc-issue', 30);
-    # Wait for the addon products screen if needed
-    unless (is_sle('15-SP2+') && get_var('MEDIA_UPGRADE')) {
-        if ($self->process_unsigned_files([qw(inst-addon addon-products)])) {
-            assert_screen_with_soft_timeout(
-                [qw(inst-addon addon-products)],
-                timeout      => check_var('BACKEND', 'pvm_hmc') ? 600 : 60,
-                soft_timeout => 30,
-                bugref       => 'bsc#1166504');
-        }
-    }
+    $self->process_unsigned_files([qw(inst-addon addon-products)]);
+    assert_screen_with_soft_timeout([qw(inst-addon addon-products)], timeout => 60, soft_timeout => 30, bugref => 'bsc#1123963');
     if (get_var("ADDONS")) {
         send_key match_has_tag('inst-addon') ? 'alt-k' : 'alt-a';
         # the ISO_X variables must match the ADDONS list
         my $sr_number = 0;
-        my $last_addon;
         for my $addon (split(/,/, get_var('ADDONS'))) {
             $sr_number++ unless (is_sle('15+') && $sr_number == 1);
-            # in full_installer the dialog to choose the installation media
-            # does not appear, thus we have to skip it
-            unless ((check_var('FLAVOR', 'Full')) || ((is_sle('15-SP2+') && get_var('MEDIA_UPGRADE')))) {
-                assert_screen 'addon-menu-active';
-                wait_screen_change { send_key 'alt-d' };    # DVD
-                send_key $cmd{next};
-                assert_screen 'dvd-selector';
-                send_key_until_needlematch 'addon-dvd-list',         'tab',  5;     # jump into addon list
-                send_key_until_needlematch "addon-dvd-sr$sr_number", 'down', 10;    # select addon in list
-                send_key 'alt-o';                                                   # continue
-            }
+            assert_screen 'addon-menu-active';
+            wait_screen_change { send_key 'alt-d' };    # DVD
+            send_key $cmd{next};
+            assert_screen 'dvd-selector';
+            send_key_until_needlematch 'addon-dvd-list',         'tab',  5;     # jump into addon list
+            send_key_until_needlematch "addon-dvd-sr$sr_number", 'down', 10;    # select addon in list
+            send_key 'alt-o';                                                   # continue
             handle_addon($addon);
-            # add another add-on if $addon is not first from all ADDONS and not in SLE 15+
-            send_key 'alt-a' if (is_sle('<15') && ((split(/,/, get_var('ADDONS')))[-1] ne $addon));
-            $last_addon = $addon;
-        }
-        if (is_sle('15+') && $last_addon !~ /^ses$|^rt$/) {
-            if (get_var('ADDONS') !~ /all-packages/) {
-                # handle_all_packages_medium() leaves the installer one step further
-                # so click on Next if it was not called
-                wait_screen_change { send_key $cmd{next} };
+            if ((split(/,/, get_var('ADDONS')))[-1] ne $addon) {                # if $addon is not first from all ADDONS
+                send_key 'alt-a';                                               # add another add-on
             }
-            assert_screen 'addon-product-installation';
         }
     }
-    test_addonurl if is_sle('>=15') && get_var('ADDONURL');
+    test_addonurl
+      if is_sle('>=15')
+      and !check_var('SCC_REGISTER', 'installation')
+      and (get_var('ALL_MODULES') || get_var('WORKAROUND_MODULES'));
+
     if (get_var("ADDONURL")) {
         if (match_has_tag('inst-addon')) {
-            send_key 'alt-k';    # install with addons
+            send_key 'alt-k';                                                   # install with addons
         }
         else {
             send_key 'alt-a';
         }
         for my $addon (split(/,/, get_var('ADDONURL'))) {
             assert_screen 'addon-menu-active';
-            my $uc_addon = uc $addon;    # variable name is upper case
-            send_key 'alt-u';            # specify url
+            my $uc_addon = uc $addon;                                           # varibale name is upper case
+            send_key 'alt-u';                                                   # specify url
             send_key $cmd{next};
             assert_screen 'addonurl-entry';
             send_key 'alt-u';                                      # select URL field

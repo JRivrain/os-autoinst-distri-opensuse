@@ -9,24 +9,11 @@
 # without any warranty.
 
 # Summary: Wait for installer welcome screen. Covers loading linuxrc
-# - Check if system is on installer environment
-# - Goes through install steps (welcome screen, product lists, beta warning,
-# dhcp confirmation)
-# - If scc url error is found, try to type one from "$SCC_URL_VALID" system variable
-# - Handle self update server and untrusted ca warnings
-# - Handle dhcp question
-# - Handle beta warnings
-# - Check product selection
-# - Go to console and check bootloader parameters, checking /proc/cmdline and /etc/install.inf
-# - Save screenshot
-# - If necessary, change keyboard layout
-# - Proceed install (Next, next) until license on welcome screen is found
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
 use strict;
 use warnings;
-use base 'y2_installbase';
-use y2_logs_helper qw(accept_license verify_license_translations verify_license_has_to_be_accepted);
+use base "y2logsstep";
 use testapi;
 use x11utils 'ensure_fullscreen';
 use version_utils qw(:VERSION :SCENARIO);
@@ -69,18 +56,16 @@ sub get_product_shortcuts {
             : is_aarch64() ? 's'
             : 'i',
             sled     => 'x',
-            sles4sap => is_ppc64le() ? 'i'
-            : (is_sle('=15-SP2') && is_x86_64()) ? 't'
-            : 'p',
-            hpc => is_x86_64() ? 'g' : 'u',
-            rt  => is_x86_64() ? 't' : undef
+            sles4sap => get_var('OFW') ? 'i' : 'p',
+            hpc      => is_x86_64() ? 'g' : 'u',
+            rt       => is_x86_64() ? 't' : undef
         );
     }
     # Else return old shortcuts
     return (
         sles     => 's',
         sled     => 'u',
-        sles4sap => is_ppc64le() ? 'u' : 'x',
+        sles4sap => get_var('OFW') ? 'u' : 'x',
         hpc      => is_x86_64() ? 'x' : 'u',
         rt       => is_x86_64() ? 'u' : undef
     );
@@ -105,6 +90,7 @@ sub run {
     # Add tag to check for https://progress.opensuse.org/issues/30823 "test is
     # stuck in linuxrc asking if dhcp should be used"
     push @welcome_tags, 'linuxrc-dhcp-question';
+    ensure_fullscreen;
 
     # Process expected pop-up windows and exit when welcome/beta_war is shown or too many iterations
     while ($iterations++ < scalar(@welcome_tags)) {
@@ -135,7 +121,6 @@ sub run {
             next;
         }
         if (match_has_tag 'linuxrc-dhcp-question') {
-            send_key 'tab' if (match_has_tag 'linuxrc-dhcp-question-no');
             send_key 'ret';
         }
     }
@@ -145,13 +130,9 @@ sub run {
         assert_screen 'inst-betawarning';
         wait_screen_change { send_key 'ret' };
     }
-
-    ensure_fullscreen;
-
     assert_screen((is_sle('15+') && get_var('UPGRADE')) ? 'inst-welcome-no-product-list' : 'inst-welcome');
     mouse_hide;
     wait_still_screen(3);
-
 
     # license+lang +product (on sle15)
     # On sle 15 license is on different screen, here select the product
@@ -168,12 +149,18 @@ sub run {
         }
         assert_screen('select-product-' . $product);
     }
+    # Accept the License on installations where License Agreement is shown on Welcome screen.
+    elsif (has_license_on_welcome_screen) {
+        if (get_var('INSTALLER_EXTENDED_TEST')) {
+            $self->verify_license_has_to_be_accepted;
+            $self->verify_license_translations unless is_sle('15+');
+        }
+        $self->accept_license;
+    }
+
     # Verify install arguments passed by bootloader
     # Linuxrc writes its settings in /etc/install.inf
     if (!is_remote_backend && get_var('VALIDATE_INST_SRC')) {
-        # Ensure to have the focus in some non-selectable control, i.e.: Keyboard Test
-        # before switching to console during installation
-        wait_screen_change { send_key 'alt-y' };
         wait_screen_change { send_key 'ctrl-alt-shift-x' };
         my $method     = uc get_required_var('INSTALL_SOURCE');
         my $mirror_src = get_required_var("MIRROR_$method");
@@ -186,7 +173,7 @@ sub run {
     }
 
     switch_keyboard_layout if get_var('INSTALL_KEYBOARD_LAYOUT');
-    send_key $cmd{next} unless has_license_on_welcome_screen;
+    send_key $cmd{next};
 }
 
 1;

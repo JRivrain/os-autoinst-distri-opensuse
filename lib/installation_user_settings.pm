@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright © 2016-2020 SUSE LLC
+# Copyright © 2016-2018 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -30,17 +30,16 @@ sub await_password_check {
     # PW too easy (cracklib)
     # bsc#937012 is resolved in > SLE 12, skip if VERSION=12
     return if (is_sle('=12') && check_var('ARCH', 's390x'));
-    assert_screen('inst-userpasswdtoosimple', (check_var('BACKEND', 'pvm_hmc')) ? 60 : 30);
+    assert_screen 'inst-userpasswdtoosimple';
     send_key 'ret';
 
 }
 
 sub enter_userinfo {
     my (%args) = @_;
-    $args{username}     //= $realname;
-    $args{max_interval} //= undef;
+    $args{username} //= $realname;
     send_key 'alt-f';    # Select full name text field
-    wait_screen_change { type_string($args{username}, max_interval => $args{max_interval}); };
+    wait_screen_change { $args{retry} ? type_string_slow $args{username} : type_string $args{username} };
     send_key 'tab';      # Select password field
     send_key 'tab';
     type_password_and_verification;

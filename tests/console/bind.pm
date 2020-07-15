@@ -9,17 +9,6 @@
 
 # Summary: bind upstream testsuite
 #          prepare, build, fix broken tests and execute testsuite
-# - Register and add correct products by calling "handle_bind_source_dependencies.sh"
-# - Install required packages for the test, depending on SLES version
-# - Enable source repositories and install bind src.rpm
-# - Change to /usr/src/packages and rebuild bind package by calling "rpmbuild
-# -bc SPECS/bind.spec"
-# - Replace bind from build with system binaries on "conf.sh"
-# - Upload "conf.sh" as reference
-# - Setup loopback interfaces
-# - Run "runall.sh" testsuite
-# - De register repositores
-# - In case of failure, upload "systests.output" log
 # Maintainer: Jozef Pupava <jpupava@suse.com>
 
 use base 'consoletest';
@@ -35,8 +24,8 @@ sub run {
 
     # script to add missing dependency repos and in second run remove only added products/repos
     assert_script_run 'curl -v -o /tmp/script.sh ' . data_url('qam/handle_bind_source_dependencies.sh');
-    assert_script_run 'bash /tmp/script.sh', 200;
-    if (is_sle('<=12-SP5')) {
+    assert_script_run 'bash /tmp/script.sh';
+    if (is_sle('<=12-SP4')) {
         # preinstall libopenssl-devel & libmysqlclient-devel because on 12* are multiple versions and zypper can't decide,
         # perl-IO-Socket-INET6 for reclimit test
         zypper_call 'in libopenssl-devel libmysqlclient-devel bind rpm-build perl-IO-Socket-INET6';

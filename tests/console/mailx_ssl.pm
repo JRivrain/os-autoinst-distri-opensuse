@@ -8,7 +8,7 @@
 # without any warranty.
 #
 # Summary: Test mailx send/reveive mails with SSL enabled
-# Maintainer: Ben Chou <bchou@suse.com>
+# Maintainer: Qingming Su <qmsu@suse.com>
 
 use base "consoletest";
 use strict;

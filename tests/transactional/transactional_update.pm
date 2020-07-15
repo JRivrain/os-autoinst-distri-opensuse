@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright © 2020 SUSE LLC
+# Copyright © 2017 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -20,24 +20,26 @@ use base "opensusebasetest";
 use testapi;
 use version_utils qw(is_caasp is_staging is_opensuse is_leap);
 use transactional;
-use utils;
 
+# Download files needed for transactional update test
+sub get_utt_packages {
+    # CaaSP needs an additional repo for testing
+    assert_script_run 'curl -O ' . data_url("caasp/utt.repo") unless is_opensuse;
 
-=head2 check_package
+    # Different testfiles for SLE (CaaSP) and openSUSE (Kubic)
+    my $tarball = 'utt-';
+    $tarball .= is_opensuse() ? 'opensuse' : 'sle';
+    $tarball .= '-' . get_required_var('ARCH') . '.tgz';
 
-check_package([stage => $stage, package => $package]);
+    assert_script_run 'curl -O ' . data_url("caasp/$tarball");
+    assert_script_run "tar xzvf $tarball";
+}
 
-Check that package presence & version are as expected
-
-Optional C<$stage> can be specified with possible values are 'no', 'in' and 'up'. default is 'no'.
-Optional C<$package> can be specified name of rpm file. default is 'update-test-security'.
-
-=cut
+# Check that package presence & version is as expected
 sub check_package {
-    my (%args) = @_;
-    my $stage   = $args{stage}   // 'no';
-    my $package = $args{package} // 'update-test-security';
+    my $stage   = shift // 'no';
     my $in_vr   = rpmver('vr');
+    my $package = 'update-test-security';
 
     if ($stage eq 'no') {
         assert_script_run "! rpm -q $package";
@@ -47,7 +49,7 @@ sub check_package {
         my ($in_ver, $in_rel) = split '-', $in_vr;
         my ($up_ver, $up_rel) = split '-', script_output("rpm -q --qf '%{V}-%{R}' $package");
 
-        $up_rel =~ s/lp\d+\.(?:mo\.)?//;
+        $up_rel =~ s/lp// if is_leap;
         $in_ver = version->declare($in_ver);
         $in_rel = version->declare($in_rel);
         $up_ver = version->declare($up_ver);
@@ -62,14 +64,12 @@ sub check_package {
 }
 
 sub run {
-    select_console 'root-console';
-
     script_run "rebootmgrctl set-strategy off";
 
-    if (is_opensuse && get_var('BETA')) {
+    if (is_leap && get_var('BETA')) {
         record_info 'Remove pkgs', 'Remove preinstalled packages on Leap BETA';
         trup_call "pkg remove update-test-[^t]*";
-        process_reboot(trigger => 1);
+        process_reboot 1;
     }
 
     get_utt_packages;
@@ -77,7 +77,7 @@ sub run {
     record_info 'Install ptf', 'Install package - snapshot #1';
     trup_call "ptf install" . rpmver('security');
     check_reboot_changes;
-    check_package(stage => 'in');
+    check_package 'in';
 
     # Find snapshot number for rollback
     my $f    = is_caasp('<=4.0') ? 2 : 1;
@@ -87,10 +87,10 @@ sub run {
     unless (is_opensuse && is_staging) {
         record_info 'Update #1', 'Add repository and update - snapshot #2';
         # openSUSE does not need additional repo
-        zypper_call 'ar utt.repo' unless is_opensuse;
+        assert_script_run 'zypper ar utt.repo' unless is_opensuse;
         trup_call 'cleanup up';
         check_reboot_changes;
-        check_package(stage => 'up');
+        check_package 'up';
 
         record_info 'Update #2', 'System should be up to date - no changes expected';
         trup_call 'cleanup up';
@@ -115,17 +115,10 @@ sub run {
     check_reboot_changes;
     check_package;
 
-    record_info 'Continue', 'Continue modifying an snapshot -snapshots #5 and #6';
-    trup_call "pkg install" . rpmver('feature');
-    trup_call "--continue pkg install" . rpmver('optional');
-    check_reboot_changes;
-    check_package(stage => 'in', package => 'update-test-feature');
-    check_package(stage => 'in', package => 'update-test-optional');
-
     record_info 'Rollback', 'Revert to snapshot with initial rpm';
     trup_call "rollback $snap";
     check_reboot_changes;
-    check_package(stage => 'in');
+    check_package 'in';
 }
 
 sub test_flags {

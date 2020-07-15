@@ -1,4 +1,4 @@
-# Copyright (C) 2018-2020 SUSE LLC
+# Copyright (C) 2018-2019 SUSE LLC
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -27,22 +27,17 @@ use utils;
 
 sub run {
     my ($self) = @_;
-    select_console "root-console";
+    $self->select_serial_terminal;
 
     # SELinux by default
     validate_script_output("sestatus", sub { m/SELinux status: .*disabled/ });
 
     # enable SELinux in grub
-    add_grub_cmdline_settings('security=selinux selinux=1 enforcing=0', update_grub => 1);
+    add_grub_cmdline_settings('security=selinux selinux=1 enforcing=0', 1);
 
-    # control (enable) the status of SELinux on the system
-    assert_script_run("sed -i -e 's/^SELINUX=/#SELINUX=/' /etc/selinux/config");
-    assert_script_run("echo 'SELINUX=permissive' >> /etc/selinux/config");
-
-    # reboot the vm and reconnect the console
     power_action("reboot", textmode => 1);
     $self->wait_boot;
-    select_console "root-console";
+    $self->select_serial_terminal;
 
     validate_script_output(
         "sestatus",

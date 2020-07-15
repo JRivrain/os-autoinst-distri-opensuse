@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright © 2019-2020 SUSE LLC
+# Copyright © 2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -24,8 +24,8 @@ sub pre_run_hook {
 sub run {
     #run test
     assert_script_run 'cd /var/opt/systemd-tests';
-    assert_script_run './run-tests.sh TEST-13-NSPAWN-SMOKE --run 2>&1 | tee /tmp/testsuite.log', 120;
-    assert_script_run 'grep "PASS: ...TEST-13-NSPAWN-SMOKE" /tmp/testsuite.log';
+    assert_script_run './run-tests.sh TEST-13-NSPAWN-SMOKE --run 2>&1 | tee /tmp/testsuite.log', 60;
+    assert_screen("systemd-testsuite-test-13-nspawn-smoke");
 }
 
 sub test_flags {

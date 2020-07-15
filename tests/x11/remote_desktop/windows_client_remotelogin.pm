@@ -16,7 +16,7 @@ use warnings;
 use base 'x11test';
 use testapi;
 use lockapi;
-use version_utils qw(is_sles4sap is_tumbleweed);
+use version_utils 'is_sles4sap';
 
 sub run {
     my $self = shift;
@@ -41,15 +41,14 @@ sub run {
     send_key "ret";
 
     assert_screen "xrdp-sharing-activate", 120;
-
-    if (is_sles4sap || is_tumbleweed) {
+    if (is_sles4sap) {
         x11_start_program('gnome-session-quit --logout --force', valid => 0);
     }
     else {
         assert_and_click "close-xrdp-sharing-window";
         assert_and_click "confirm-close-remote-session";
     }
-    assert_and_click [qw(close-remote-desktop-connection remote-desktop-connection-ended)];
+    assert_and_click "close-remote-desktop-connection";
 
     send_key "c";
 }

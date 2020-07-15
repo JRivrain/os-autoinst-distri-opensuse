@@ -6,7 +6,6 @@ use warnings;
 use testapi;
 use utils;
 use Utils::Backends 'has_ttys';
-use x11utils 'turn_off_gnome_suspend';
 
 sub verify_default_keymap_textmode_non_us {
     my ($self, $test_string, $tag) = @_;
@@ -35,10 +34,9 @@ sub verify_default_keymap_textmode {
         send_key('alt-f3');
         # remote backends can not provide a "not logged in console" so we use
         # a cleared remote terminal instead
-        assert_screen(has_ttys() ? 'linux-login' : 'cleared-console');
+        assert_screen(has_ttys() ? 'linux-login' : 'cleared_console');
     }
 
-    wait_still_screen;
     type_string($test_string);
     assert_screen($tag);
     # clear line in order to add user bernhard to tty group
@@ -56,7 +54,6 @@ sub notification_handler {
 sub verify_default_keymap_x11 {
     my ($self, $test_string, $tag, $program) = @_;
     notification_handler('org.gnome.DejaDup periodic', 'false') if (check_var('DESKTOP', 'gnome'));
-    turn_off_gnome_suspend                                      if (check_var('DESKTOP', 'gnome'));
     select_console('x11');
     x11_start_program($program);
     type_string($test_string);
@@ -76,15 +73,6 @@ sub get_keystroke_list {
         cz => ';+ěščřžýáíé=1234567890%'
     );
     return $keystrokes{$layout};
-}
-
-# post_fail_hook for upload logs for test module which uses it as base
-# see https://progress.opensuse.org/issues/56636
-sub post_fail_hook {
-    my ($self) = shift;
-    select_console('log-console');
-    $self->SUPER::post_fail_hook;
-    $self->export_logs_basic;
 }
 
 1;

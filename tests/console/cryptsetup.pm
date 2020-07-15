@@ -9,7 +9,7 @@
 
 # Summary: FIPS: cryptsetup
 #    This case is verify the command of cryptsetup whether can be work in FIPS mode
-# Maintainer: Ben Chou <bchou@suse.com>
+# Maintainer: dehai <dhkong@suse.com>
 # Tags: tc#1528909
 
 

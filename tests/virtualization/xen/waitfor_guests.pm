@@ -21,11 +21,11 @@ sub run {
     zypper_call '-t in nmap iputils bind-utils virt-manager';
 
     # Fill the current pairs of hostname & address into /etc/hosts file
-    assert_script_run "echo '$xen::guests{$_}->{ip} $_ # virtualization' >> /etc/hosts" foreach (keys %xen::guests);
+    assert_script_run "echo '$xen::guests{$_}->{ip} $_' >> /etc/hosts" foreach (keys %xen::guests);
     assert_script_run "cat /etc/hosts";
 
     # Check if SSH is open because of that means that the guest is installed
-    script_retry("sh -c 'if virsh list --all | grep $_ | grep \"shut off\"; then virsh start $_; exit 1; else nmap $_ -PN -p ssh | grep open; fi'", delay => 60, retry => 60) foreach (keys %xen::guests);
+    script_retry("nmap $_ -PN -p ssh | grep open", delay => 60, retry => 60) foreach (keys %xen::guests);
 
     # All guests should be now installed, show them
     assert_script_run 'virsh list --all';

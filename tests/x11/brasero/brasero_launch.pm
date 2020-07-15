@@ -8,9 +8,6 @@
 # without any warranty.
 
 # Summary: Brasero launch and about
-# - Run brasero (installs it if necessary)
-# - Call help and about and check the window
-# - Close help and brasero
 # Maintainer: Grace Wang <gwang@suse.com>
 
 use base "x11test";

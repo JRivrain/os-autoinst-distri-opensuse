@@ -1,7 +1,7 @@
 # SUSE's openQA tests
 #
 # Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2019 SUSE LLC
+# Copyright © 2012-2018 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -9,19 +9,6 @@
 # without any warranty.
 
 # Summary: Case#1436111: Firefox: Preferences Change Saving
-# - Launch xterm, kill firefox, cleanup previous firefox configuration, launch
-# firefox
-# - Switch back to xterm (alt-tab), run "ll --time-style=full-iso
-# .mozilla/firefox/*.default/prefs.js | cut -d' ' -f7 " and save output to a
-# file
-# - Save screenshot
-# - Open firefox preferences
-# - Change firefox start to "Show a blank page"
-# - Run "ll --time-style=full-iso
-# .mozilla/firefox/*.default/prefs.js | cut -d' ' -f7" again and save to a new
-# file
-# - Compare timestamps recorded
-# - Exit firefox
 # Maintainer: wnereiz <wnereiz@gmail.com>
 
 use strict;
@@ -33,7 +20,7 @@ use version_utils 'is_sle';
 sub run {
 
     my ($self) = @_;
-    my $changesaving_checktimestamp = "ll --time-style=full-iso .mozilla/firefox/*default*/prefs.js | cut -d' ' -f7";
+    my $changesaving_checktimestamp = "ll --time-style=full-iso .mozilla/firefox/*.default/prefs.js | cut -d' ' -f7";
 
     $self->start_firefox_with_profile;
 

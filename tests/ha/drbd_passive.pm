@@ -29,10 +29,6 @@ sub assert_standalone {
 }
 
 sub run {
-    # Exit of this module if we are in a maintenance update not related to drbd
-    # write_tag is mandatory for next filesystem module
-    write_tag('drbd_passive') and return 1 if is_not_maintenance_update('drbd');
-
     my $cluster_name  = get_cluster_name;
     my $drbd_rsc      = 'drbd_passive';
     my $drbd_rsc_file = "/etc/drbd.d/$drbd_rsc.res";
@@ -74,8 +70,8 @@ sub run {
         assert_script_run "sed -i 's/%ADDR_NODE_02%/$node_02_ip/g' $drbd_rsc_file";
 
         # Note: we use ';' instead of '/' as the sed separator because of UNIX file names
-        assert_script_run "sed -i 's;%DRBD_LUN_01%;\"$drbd_lun_01\";g' $drbd_rsc_file";
-        assert_script_run "sed -i 's;%DRBD_LUN_02%;\"$drbd_lun_02\";g' $drbd_rsc_file";
+        assert_script_run "sed -i 's;%DRBD_LUN_01%;$drbd_lun_01;g' $drbd_rsc_file";
+        assert_script_run "sed -i 's;%DRBD_LUN_02%;$drbd_lun_02;g' $drbd_rsc_file";
 
         # Show the result
         type_string "cat $drbd_rsc_file\n";
@@ -91,7 +87,7 @@ sub run {
     barrier_wait("DRBD_CREATE_CONF_$cluster_name");
 
     # Create the DRBD device
-    assert_script_run "drbdadm create-md --force $drbd_rsc";
+    assert_script_run "drbdadm create-md $drbd_rsc";
     assert_script_run "drbdadm up $drbd_rsc";
 
     # Wait for first node to complete its configuration

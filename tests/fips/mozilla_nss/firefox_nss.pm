@@ -1,6 +1,6 @@
 # SUSE's openQA tests - FIPS tests
 #
-# Copyright © 2016-2020 SUSE LLC
+# Copyright © 2016-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -9,14 +9,16 @@
 
 # Case #1560076 - FIPS: Firefox Mozilla NSS
 
-# Summary: FIPS mozilla-nss test for firefox : firefox_nss
-# Maintainer: Ben Chou <bchou@suse.com>
-# Tag: poo#47018, poo#58079
+# Summary: FIPS mozilla-nss test for firefox
+# Maintainer: mitiao <mitiao@gmail.com>,
+#             wnereiz <wnereiz@fsf.member.org>
+# Tag: poo#47018
 
 use base "x11test";
 use strict;
 use warnings;
 use testapi;
+use x11utils 'turn_off_gnome_screensaver';
 
 sub quit_firefox {
     send_key "alt-f4";
@@ -26,8 +28,7 @@ sub quit_firefox {
 }
 
 sub run {
-    my ($self) = @_;
-    select_console 'root-console';
+    my ($self) = shift;
 
     # Define FIPS password for firefox, and it should be consisted by:
     # - at least 8 characters
@@ -35,7 +36,8 @@ sub run {
     # - at least one non-alphabet-non-number character (like: @-.=%)
     my $fips_password = 'openqa@SUSE';
 
-    select_console 'x11';
+    # Turn off screensaver before launch firefox in order to avoid the screensaver block
+    turn_off_gnome_screensaver if check_var('DESKTOP', 'gnome');
     x11_start_program('firefox https://html5test.opensuse.org', target_match => 'firefox-html-test', match_timeout => 360);
 
     # Firfox Preferences
@@ -44,8 +46,8 @@ sub run {
     send_key "n";
     assert_screen('firefox-preferences');
 
-    # Search "Passwords" section
-    type_string "Use a";    # Search "Passwords" section
+    type_string "Forms";       # Search "Forms & Passwords" section
+    send_key "tab";            # Hide blinking cursor in the search box
     wait_still_screen 2;
     send_key "alt-shift-u";    # Use a master password
     assert_screen('firefox-passwd-master_setting');
@@ -59,7 +61,6 @@ sub run {
     wait_still_screen 3;
 
     send_key "ctrl-f";
-    send_key "ctrl-a";
     type_string "certificates";    # Search "Certificates" section
     send_key "tab";
     wait_still_screen 2;

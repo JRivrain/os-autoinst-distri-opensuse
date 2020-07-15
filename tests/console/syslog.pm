@@ -1,4 +1,4 @@
-# Copyright (C) 2018-2020 SUSE LLC
+# Copyright (C) 2018 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -6,13 +6,6 @@
 # without any warranty.
 
 # Summary: Check for syslog daemon
-# - Run "logger Test Log Message FOOBAR123"
-# - Check if syslog-ng is installed
-# - If rsyslog is installed, check if rsyslog is enabled, active and its status,
-# if system is not tumbleweed or jeos.
-# - Check system log for test message
-# - Check if systemd-journald is enabled, active and its status
-# - Check journalctl -b output for test message
 # Maintainer: Dominik Heidler <dheidler@suse.de>
 
 use base 'consoletest';
@@ -23,8 +16,7 @@ use utils;
 use version_utils;
 
 sub run {
-    my $self = shift;
-    $self->select_serial_terminal;
+    select_console 'root-console';
 
     my $test_log_msg = 'Test Log Message FOOBAR123';
     assert_script_run "logger $test_log_msg";

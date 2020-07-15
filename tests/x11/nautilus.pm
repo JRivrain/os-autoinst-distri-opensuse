@@ -9,9 +9,6 @@
 # without any warranty.
 
 # Summary: Test initial startup of nautilus
-# - Start nautilus
-# - Check if nautilus was launched
-# - Close nautilus
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
 use base "x11test";

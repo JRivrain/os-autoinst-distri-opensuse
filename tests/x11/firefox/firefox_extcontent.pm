@@ -9,15 +9,6 @@
 # without any warranty.
 
 # Summary: Firefox: Externally handled content (Case#1436064)
-# - Launch xterm, kill firefox, cleanup previous firefox configuration, launch
-# firefox
-# - Open url
-# "http://mirror.bej.suse.com/dist/install/SLP/SLE-12-SP3-Server-GM/x86_64/dvd1/"
-# and check
-# - Search for "license.tar.gz"
-# - Select open "license.tar.gz"
-# - Check if file is handled correctly
-# - Exit firefox
 # Maintainer: wnereiz <wnereiz@gmail.com>
 
 use strict;
@@ -30,7 +21,7 @@ sub run {
     my ($self) = @_;
 
     $self->start_firefox_with_profile;
-    $self->firefox_open_url('http://mirror.suse.cz/install/SLP/SLE-12-SP5-Server-GM/x86_64/DVD1/');
+    $self->firefox_open_url('http://mirror.bej.suse.com/dist/install/SLP/SLE-12-SP3-Server-GM/x86_64/dvd1/');
 
     assert_screen('firefox-extcontent-pageloaded');
 

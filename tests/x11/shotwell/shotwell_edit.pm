@@ -8,7 +8,7 @@
 # without any warranty.
 
 # Summary: Shotwell: Delete or edit an imported image
-# Maintainer: Zhaocong Jia <zcjia@suse.com> Grace Wang <grace.wang@suse.com>
+# Maintainer: Chingkai <qkzhu@suse.com>
 # Tags: tc#1503811
 
 

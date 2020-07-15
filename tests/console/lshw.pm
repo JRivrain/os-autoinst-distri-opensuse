@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright © 2019-2020 SUSE LLC
+# Copyright © 2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -17,16 +17,13 @@ use testapi;
 use utils;
 
 sub run {
-    my $self = shift;
-    $self->select_serial_terminal;
+    select_console 'root-console';
 
     zypper_call('in lshw libxml2-tools');
 
     # Check various output formats, -sanitize is used to not spill test machine serial numbers into public
     # On some architectures fields like "product" or "vendor" or section "*-pci" might not exist, so trying a common base.
-    assert_script_run("lshw -sanitize | grep -A5 'description'");
-    assert_script_run("lshw -sanitize | grep -A5 '\\*-memory\$'");
-    assert_script_run("lshw -sanitize | grep -A5 '\\*-network'");
+    validate_script_output("lshw -sanitize", sub { m/description.*\*-memory\n.*\*-network/s });
     assert_script_run("lshw -html -sanitize");
     assert_script_run("lshw -xml -sanitize");
     assert_script_run("lshw -json -sanitize");

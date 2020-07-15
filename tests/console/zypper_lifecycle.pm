@@ -8,23 +8,6 @@
 # without any warranty.
 
 # Summary: test for 'zypper lifecycle'
-# - Run "zypper lifecycle" and parse its output for some header and links
-# - Runs a series of checks to determine a suitable package to validade
-# lifecycle, else hardcode to "sles-release"
-# - Backup original lifecycle data files (if exists)
-# (/var/lib/lifecycle/data/$prod.lifecycle) and create a new one with
-# "2020-02-03" as date and sles-release as package
-# - Check zypper lifecycle sles-release output
-# - Check zypper lifecycle sles-release --date 2020-02-04
-# - Check zypper lifecycle sles-release --date 2020-02-02
-# - Delete lifecycle data previously created
-# - Get product EOL by parsing /etc/products.d/$product.prod
-# - Check if product EOL matches test package EOL
-# - Restore original lifecycle data
-# - Check output of "zypper lifecycle --help"
-# - Check return of "zypper lifecycle --days 0"
-# - Check output of "zypper lifecycle --days 9999"
-# - Check output of "zypper lifecycle --date $(date --iso-8601)"
 # Maintainer: Oliver Kurz <okurz@suse.de>
 # Tags: fate#320597
 
@@ -39,12 +22,8 @@ our $date_re = qr/[0-9]{4}-[0-9]{2}-[0-9]{2}/;
 
 sub run {
     diag('fate#320597: Introduce \'zypper lifecycle\' to provide information about life cycle of individual products and packages');
-    # We add 'zypper ref' here to download and preparse the metadata of packages,
-    # which will make the follow 'zypper lifecycle' runs faster.
-    select_console 'root-console';
-    script_run('zypper ref');
     select_console 'user-console';
-    my $overview = script_output('zypper lifecycle', 600);
+    my $overview = script_output 'zypper lifecycle', 300;
     die "Missing header line:\nOutput: '$overview'" unless $overview =~ /Product end of support/;
     die "Missing link to lifecycle page:\nOutput: '$overview'"
       if $overview =~ /n\/a/ && $overview !~ qr{\*\) See https://www.suse.com/lifecycle for latest information};
@@ -85,9 +64,9 @@ sub run {
     }
     die "No suitable package found. Script output:\nOutput: '$output'" unless $package;
 
-    my $testdate        = '2620-02-03';
-    my $testdate_after  = '2620-02-04';
-    my $testdate_before = '2620-02-02';
+    my $testdate        = '2020-02-03';
+    my $testdate_after  = '2020-02-04';
+    my $testdate_before = '2020-02-02';
     # backup and create our lifecycle data with known content
     select_console 'root-console';
     assert_script_run "
@@ -164,7 +143,7 @@ sub run {
 }
 
 sub test_flags {
-    return {milestone => 1, fatal => 0};
+    return {milestone => 1};
 }
 
 sub post_fail_hook {

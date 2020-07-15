@@ -1,16 +1,15 @@
 # SUSE's openQA tests
 #
-# Copyright © 2017-2020 SUSE LLC
+# Copyright © 2017 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
 # notice and this notice are preserved.  This file is offered as-is,
 # without any warranty.
-#
+
 # Summary: The test to connect openvswitch to openflow with SSL enabled
-#
-# Maintainer: Ben Chou <bchou@suse.com>
-# Tags: TC1595181, poo#65375
+# Maintainer: Wei Jiang <wjiang@suse.com>
+# Tags: TC1595181
 
 use base "consoletest";
 use strict;
@@ -20,7 +19,7 @@ use utils;
 
 sub run {
     select_console 'root-console';
-    zypper_call('in python openvswitch');    # Install python2 here since pox scripts need python2
+    zypper_call('in openvswitch');
 
     # Start openvswitch service
     systemctl('start openvswitch');
@@ -74,10 +73,6 @@ sub run {
 
     # Stop pox
     assert_script_run "ps aux|grep '[p]ox.py'|awk '{print \$2}'|xargs kill";
-}
-
-sub test_flags {
-    return {fatal => 0};
 }
 
 1;

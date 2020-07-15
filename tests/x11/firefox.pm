@@ -9,9 +9,6 @@
 # without any warranty.
 
 # Summary: Very basic firefox test opening an html-test
-# - Start firefox with url "https://html5test.opensuse.org"
-# - Open about window and check
-# - Exit firefox
 # Maintainer: Stephan Kulow <coolo@suse.com>
 
 package firefox;
@@ -19,15 +16,16 @@ use base "x11test";
 use strict;
 use warnings;
 use testapi;
-use version_utils 'is_tumbleweed';
 
 sub run() {
     my ($self) = shift;
 
     $self->start_firefox;
     wait_still_screen;
-    send_key_until_needlematch('firefox-help-menu', 'alt-h', 5, 6);
-    send_key_until_needlematch('test-firefox-3',    'a',     5, 6);
+    send_key "alt-h";
+    assert_screen 'firefox-help-menu';
+    send_key "a";
+    assert_screen 'test-firefox-3';
 
     # close About
     send_key "alt-f4";

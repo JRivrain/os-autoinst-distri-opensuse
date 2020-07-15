@@ -9,11 +9,6 @@
 
 # Summary: Avoid suprises later and run scheduled tasks explicitly, be it cron
 #   jobs or systemd timer
-# - Show dmesg output in console during cron run
-# - Settle system load before starting tasks
-# - Run cron jobs and systemd timers
-# - Disable btrfs cron jobs symlinking them to /bin/true
-# - Settle system load again
 # Maintainer: Stephan Kulow <coolo@suse.de>
 # Tags: bsc#1017461, bsc#1063638
 
@@ -45,14 +40,11 @@ sub run {
     settle_load;
     my $before = time;
     # run cron jobs or systemd timers which can affect system performance and mask systemd timers later
-    # if cron directories exist, try to run present cron jobs
-    if (script_run('ls -a /etc/cron.{hourly,daily,weekly,monthly}') == 0) {
-        assert_script_run('find /etc/cron.{hourly,daily,weekly,monthly} -type f -executable -exec echo cron job: {} \; -exec {} \;', 1000);
-    }
+    assert_script_run('find /etc/cron.{hourly,daily,weekly,monthly} -type f -executable -exec echo cron job: {} \; -exec {} \;', 1000);
     my $systemd_tasks_cmd = 'echo "Triggering systemd timed service $i" && systemctl start $i';
     $systemd_tasks_cmd .= ' && systemctl mask $i.{service,timer}' unless get_var('SOFTFAIL_BSC1063638');
     assert_script_run(
-'for i in $(systemctl list-units --type=timer --state=active --no-legend | sed -e \'s/\(\S\+\)\.timer\s.*/\1/\'); do ' . $systemd_tasks_cmd . '; done', 1000);
+'for i in $(systemctl list-units --type=timer --state=active --no-legend | sed -e \'s/\(\S\+\)\.timer\s.*/\1/\'); do ' . $systemd_tasks_cmd . '; done', 300);
     record_soft_failure 'bsc#1063638 - review I/O scheduling parameters of btrfsmaintenance' if (time - $before) > 60 && get_var('SOFTFAIL_BSC1063638');
     # Disable cron jobs on older SLE12 by symlinking them to /bin/true
     if (!get_var('SOFTFAIL_BSC1063638') && script_run("! [ -d /usr/share/btrfsmaintenance/ ]")) {

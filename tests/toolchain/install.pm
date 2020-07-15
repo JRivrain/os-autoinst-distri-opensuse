@@ -1,7 +1,7 @@
 # SUSE's openQA tests
 #
 # Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2019 SUSE LLC
+# Copyright © 2012-2018 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -16,7 +16,6 @@ use strict;
 use warnings;
 use testapi;
 use utils;
-use Utils::Systemd 'disable_and_stop_service';
 use version_utils 'is_sle';
 use registration;
 
@@ -25,14 +24,16 @@ sub run {
 
     select_console('root-console');
 
-    disable_and_stop_service('packagekit.service', mask_service => 1);
+    # disable packagekitd
+    systemctl 'mask packagekit';
+    systemctl 'stop packagekit';
 
     if (is_sle '<15') {
         # toolchain channels
         if (!check_var('ADDONS', 'tcm')) {
             my $arch = get_var('ARCH');
-            zypper_call "ar -f http://download.suse.de/ibs/SUSE/Products/SLE-Module-Toolchain/12/$arch/product/ SLE-Module-Toolchain12-Pool";
-            zypper_call "ar -f http://download.suse.de/ibs/SUSE/Updates/SLE-Module-Toolchain/12/$arch/update/ SLE-Module-Toolchain12-Updates";
+            assert_script_run "zypper ar -f http://download.suse.de/ibs/SUSE/Products/SLE-Module-Toolchain/12/$arch/product/ SLE-Module-Toolchain12-Pool";
+            assert_script_run "zypper ar -f http://download.suse.de/ibs/SUSE/Updates/SLE-Module-Toolchain/12/$arch/update/ SLE-Module-Toolchain12-Updates";
         }
         zypper_call('in -t pattern gcc5');
         zypper_call('up');
@@ -55,7 +56,7 @@ sub run {
             add_suseconnect_product("sle-module-development-tools");
         }
         zypper_call 'in -t pattern devel_basis';
-        zypper_call 'in gcc-fortran bzip2';    # from Base System Module
+        zypper_call 'in gcc-fortran';    # from Base System Module
         script_run 'export CC=/usr/bin/gcc';
         script_run 'export CXX=/usr/bin/g++';
     }

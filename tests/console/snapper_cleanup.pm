@@ -8,16 +8,6 @@
 # without any warranty.
 
 # Summary: Snapper cleanup test based on FATE#312751
-# - In case of upgrade or BOOT_TO_SNAPSHOT not set
-#   - Run snapper setup-quota
-#   - snapper set-config NUMBER_LIMIT_IMPORTANT=4-10 SPACE_LIMIT=0.5
-# - Get initial cfg and save initial NUMBER_LIMIT and NUMBER_MIN_AGE settings for later restore
-# - Check amount of free fs disk space and adapt to it
-# - Set NUMBER_LIMIT such that disk space after cleanup
-# - Exclusive disk space of qgroup should be ~50% of the fs space as set with
-#   SPACE_LIMIT
-# - Run snapper at least couple of times to ensure it cleans up properly
-# - Cleanup
 # Maintainer: Rodion Iafarov <riafarov@suse.com>
 
 use base 'btrfs_test';
@@ -33,9 +23,16 @@ my $btrfs_fs_usage = 'btrfs filesystem usage / --raw';
 sub get_space {
     my ($script) = @_;
     my $script_output = script_output($script);
-    return $script_output;
-}
+    # Problem is that sometimes we get kernel messages or other output when execute the script
+    # So we assume that biggest number returned is size we are looking for
+    if ($script_output =~ /^(\d+)$/) {
+        return $script_output;
+    }
+    record_soft_failure('bsc#1011815');
+    my @numbers = $script_output =~ /(\d+)/g;
 
+    return max(@numbers);
+}
 sub snapper_cleanup {
     my ($scratch_size_gb, $scratchfile_mb) = @_;
     my $snaps_numb = "snapper list | grep number | wc -l";
@@ -51,7 +48,7 @@ sub snapper_cleanup {
     assert_script_run("snapper cleanup number",  300);    # cleanup created snapshots
     assert_script_run("btrfs quota rescan -w /", 90);
     script_run "echo There are `$snaps_numb` snapshots AFTER cleanup";
-    assert_script_run("btrfs qgroup show -pcre /");
+    assert_script_run("btrfs qgroup show -pcre /", 3);
     assert_script_run("snapper list");
     clear_console;
     script_run($btrfs_fs_usage);
@@ -121,7 +118,7 @@ sub run {
         die("Insufficient initial disk space left on / to run this test: $initially_free bytes");
     }
     assert_script_run("snapper get-config");    # report customized cfg
-    assert_script_run("btrfs qgroup show -pc /");
+    assert_script_run("btrfs qgroup show -pc /", 3);
     # Exclusive disk space of qgroup should be ~50% of the fs space as set with SPACE_LIMIT
     $exp_excl_space = get_space("$btrfs_fs_usage | sed -n '2p' | awk -F ' ' '{print\$3}'") / 2;
     # We need to run snapper at least couple of times to ensure it cleans up properly

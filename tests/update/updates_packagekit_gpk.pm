@@ -8,15 +8,6 @@
 # without any warranty.
 
 # Summary: PackageKit update using gpk
-# - Install gnome-packagekit
-# - Check if desktop is not locked, unlock if necessary
-# - Turn off screensaver and suspend in gnome if DESKTOP is set to "gnome"
-# - Otherwise, disable xscreensaver
-# - Launch gpk-update-viewer and handle priviledged user warning
-# - If a update is available, install it
-# - If update matches "PolicyKit" tag, fill password
-# - If asked to reboot after update, reboot system
-# - If updates requires logout or application restart, close gpk
 # Maintainer: Stephan Kulow <coolo@suse.de>
 
 use base "x11test";
@@ -26,14 +17,16 @@ use testapi;
 use utils;
 use power_action_utils 'power_action';
 use version_utils 'is_sle';
-use x11utils qw(ensure_unlocked_desktop turn_off_gnome_screensaver turn_off_gnome_suspend);
+use x11utils qw(ensure_unlocked_desktop turn_off_gnome_screensaver);
 
 sub setup_system {
     x11_start_program('xterm');
+    become_root;
+    ensure_serialdev_permissions;
+    type_string "exit\n";
 
     if (check_var("DESKTOP", "gnome")) {
         turn_off_gnome_screensaver;
-        turn_off_gnome_suspend;
     }
     else {
         script_run("xscreensaver-command -exit");
@@ -88,10 +81,10 @@ sub run {
             send_key "alt-i";    # install
 
             # Wait until installation is done
-            push @updates_installed_tags, 'Policykit' if is_sle;
+            push @updates_installed_tags, 'updates_authenticate' if is_sle;
             do {
                 assert_screen \@updates_installed_tags, 3600;
-                if (match_has_tag("Policykit")) {
+                if (match_has_tag("updates_authenticate")) {
                     type_string "$password\n";
                     pop @updates_installed_tags;
                 }
@@ -100,7 +93,7 @@ sub run {
                     save_screenshot;
                     die "Failed to process request";
                 }
-            } while (match_has_tag 'Policykit');
+            } while (match_has_tag 'updates_authenticate');
             if (match_has_tag("updates_none")) {
                 wait_screen_change { send_key 'ret'; };
                 if (check_screen "updates_installed-restart", 0) {

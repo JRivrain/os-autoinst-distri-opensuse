@@ -73,7 +73,7 @@ sub run {
         send_key "right";
         assert_screen "wireshark-no-files-available";
         send_key "esc";
-        wait_still_screen 3, 6;
+        wait_still_screen 3;
         send_key "esc";
     }
 
@@ -92,14 +92,13 @@ sub run {
     # QT GUI no longer allows to manage interfaces via dedicated menu item
     else {
         send_key "ctrl-k";
-        wait_still_screen 3, 6;
+        wait_still_screen 3;
         assert_and_click "wireshark-manage-interfaces";
         wait_still_screen 3;
         assert_screen "wireshark-eth0-selected";
         assert_and_click "wireshark-interfaces-ok";
     }
 
-    wait_still_screen 2, 4;
     assert_and_click "wireshark-interfaces-start";
     assert_screen "wireshark-capturing";
     assert_screen "wireshark-capturing-list";
@@ -113,7 +112,7 @@ sub run {
 
     # set filter
     if ($wireshark_gui_version eq "qt") {
-        wait_still_screen 2;
+        wait_still_screen 1;
         send_key "ctrl-/";
     }
     assert_screen "wireshark-filter-selected";
@@ -126,7 +125,6 @@ sub run {
     assert_and_click "wireshark-dns-response-details";
     send_key "right";
     send_key_until_needlematch "wireshark-dns-response-details-answers", "down";
-    wait_still_screen 1;
     assert_and_click "wireshark-dns-response-details-answers";
     send_key "right";
     assert_screen "wireshark-dns-response-details-answers-expanded";
@@ -144,16 +142,15 @@ sub run {
     wait_still_screen 1;
     assert_and_click "wireshark-quit-save";
     assert_and_click "wireshark-quit-save-filename";
-    wait_still_screen 1, 2;
     type_string "/tmp/wireshark-openQA-test\n";
     wait_still_screen 1;
     type_string "\n";    # 2 times return for SP2
-    wait_still_screen 2;
+    wait_still_screen 1;
     assert_script_run "test -f /tmp/wireshark-openQA-test.pcapng";
 
     # start and load capture
     type_string "wireshark /tmp/wireshark-openQA-test.pcapng\n";
-    wait_still_screen 3;
+    wait_still_screen 1;
     # QT menu requires user to place focus in the filter field
     send_key "ctrl-/" if $wireshark_gui_version eq "qt";
     assert_screen "wireshark-filter-selected";
@@ -161,16 +158,12 @@ sub run {
     # Sometimes checksum error window popup, then we need close this windows since this caused by offload feature
     assert_screen([qw(wireshark-filter-applied wireshark-checksum-error)]);
     if (match_has_tag('wireshark-checksum-error')) {
-        # Close checksum-error window, when we hit this error, the show submenu was extended
-        # we need escape the submenu then send alt-c to close the checksum error page.
-        send_key "esc";
-        wait_still_screen 3;
-        send_key "esc";
+        # Close checksum-error window
         wait_screen_change { send_key 'alt-c' };
+        assert_screen "wireshark-filter-selected";
+        assert_screen "wireshark-filter-applied";
     }
-    else {
-        assert_screen "wireshark-dns-response-list";
-    }
+    assert_screen "wireshark-dns-response-list";
 
     # close capture
     assert_and_click "wireshark-close-capture";
@@ -199,7 +192,7 @@ sub run {
     assert_and_click "wireshark-preferences-columns-protocol-unselect";
     assert_screen "wireshark-preferences-columns-protocol-not-displayed-selected";
     assert_and_click "wireshark-preferences-apply";
-    wait_still_screen 3, 6;
+    wait_still_screen 3;
     send_key "alt-f4" if $wireshark_gui_version eq "gtk";
     assert_screen "wireshark-fullscreen";
 
@@ -207,7 +200,6 @@ sub run {
     send_key "ctrl-shift-a";
     assert_screen "wireshark-profiles";
     assert_and_dclick "wireshark-profiles-default";
-    wait_still_screen 3;
     # QT GUI does not close window after selecting profile
     send_key "ret" if $wireshark_gui_version eq "qt";
     assert_screen "wireshark-fullscreen";

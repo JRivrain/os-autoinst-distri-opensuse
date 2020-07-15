@@ -8,7 +8,7 @@
 # without any warranty.
 
 # Summary: Case 1503978 - LibreOffice: pyuno bridge
-# Maintainer: Zhaocong Jia <zcjia@suse.com>
+# Maintainer: Jiawei Sun <JiaWei.Sun@suse.com>
 
 use base "x11test";
 use strict;
@@ -52,8 +52,6 @@ sub run {
     assert_screen('Server-setting', 30);
     send_key "alt-t";
     send_key "alt-u";
-    # use "ctrl-a" to select existing text, then use "type_string" to overwrite
-    send_key "ctrl-a";
     type_string "$mail_user";
     send_key "alt-p";
     type_string "$mail_passwd";

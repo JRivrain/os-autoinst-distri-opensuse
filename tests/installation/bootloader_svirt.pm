@@ -82,13 +82,11 @@ sub run {
     if (check_var('BOOTFROM', 'c')) {
         $boot_device = 'hd';
     }
-    elsif (check_var('BOOTFROM', 'd') || get_var('ISO')) {
+    elsif (check_var('BOOTFROM', 'd')) {
         $boot_device = 'cdrom';
-    } else {
-        record_info("No boot medium", "Failed to select a bootable medium, please check ISO,"
-              . "BOOT_FROM and BOOT_HDD_IMAGE settings",
-            result => 'fail'
-        );
+    }
+    else {
+        get_var('ISO') ? $boot_device = 'cdrom' : $boot_device = 'hd';
     }
     # Does not make any difference on VMware. For ad hoc device selection
     # see vmware_select_boot_device_from_menu().
@@ -271,9 +269,9 @@ sub run {
     if ($vmm_family eq 'xen' and $vmm_type eq 'linux') {
         $svirt->suspend;
         my $cmdline = '';
-        $cmdline .= 'textmode=1 '                         if check_var('VIDEOMODE', 'text');
-        $cmdline .= 'rescue=1 '                           if is_installcheck || is_rescuesystem;          # rescue mode
-        $cmdline .= get_var('EXTRABOOTPARAMS') . ' '      if get_var('EXTRABOOTPARAMS');
+        $cmdline .= 'textmode=1 ' if check_var('VIDEOMODE', 'text');
+        $cmdline .= 'rescue=1 ' if is_installcheck || is_rescuesystem;    # rescue mode
+        $cmdline .= get_var('EXTRABOOTPARAMS') . ' ' if get_var('EXTRABOOTPARAMS');
         $cmdline .= registration_bootloader_cmdline . ' ' if check_var('SCC_REGISTER', 'installation');
         type_string "export pty=`virsh dumpxml $name | grep \"console type=\" | sed \"s/'/ /g\" | awk '{ print \$5 }'`\n";
         type_string "echo \$pty\n";
@@ -281,23 +279,21 @@ sub run {
         wait_serial("Press enter to boot the selected OS", 10) || die "Can't get to GRUB";
         # Do not boot OS from disk, select installation medium
         if (!get_var('BOOT_HDD_IMAGE') && get_var('ISO') && get_var('HDD_1') && !is_jeos && !is_caasp) {
-            type_string "echo -en '\\033[B' > \$pty\n";                                                   # key down
+            type_string "echo -en '\\033[B' > \$pty\n";                   # key down
         }
-        type_string "echo e > \$pty\n";                                                                   # edit
+        type_string "echo e > \$pty\n";                                   # edit
 
         if (is_jeos or is_caasp) {
-            my $max = is_sle('<15-sp2') ? 4 : 13;
-            for (1 .. $max) { type_string "echo -en '\\033[B' > \$pty\n"; }                               # four-times key down
+            for (1 .. 4) { type_string "echo -en '\\033[B' > \$pty\n"; }    # four-times key down
         }
         else {
-            $cmdline .= 'linemode=0 ';                                                                    # workaround for bsc#1066919
-            for (1 .. 2) { type_string "echo -en '\\033[B' > \$pty\n"; }                                  # four-times key down
+            $cmdline .= 'linemode=0 ';                                      # workaround for bsc#1066919
+            for (1 .. 2) { type_string "echo -en '\\033[B' > \$pty\n"; }    # four-times key down
         }
-        type_string "echo -en '\\033[K' > \$pty\n";                                                       # end of line
+        type_string "echo -en '\\033[K' > \$pty\n";                         # end of line
         type_string "echo -en ' $cmdline' > \$pty\n";
         if (is_sle('12-SP2+') or is_caasp) {
             type_string "echo -en ' xen-fbfront.video=32,1024,768 xen-kbdfront.ptr_size=1024,768 ' > \$pty\n";    # set kernel framebuffer
-            type_string "echo -en ' xen-fbfront.video=32,1024,768' > \$pty\n";
             type_string "echo -en ' console=hvc console=tty ' > \$pty\n";                                         # set consoles
         }
         else {
@@ -314,5 +310,8 @@ sub run {
     vmware_set_permanent_boot_device('cdrom');
 }
 
+sub test_flags {
+    return {fatal => 1};
+}
 
 1;

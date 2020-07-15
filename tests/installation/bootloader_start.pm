@@ -23,10 +23,7 @@ use bootloader;
 use bootloader_uefi;
 use bootloader_hyperv;
 use bootloader_svirt;
-use bootloader_zkvm;
-use bootloader_s390;
 use version_utils qw(:SCENARIO :BACKEND);
-use Utils::Architectures;
 use File::Basename;
 BEGIN {
     unshift @INC, dirname(__FILE__) . '/../boot';
@@ -34,46 +31,43 @@ BEGIN {
 use boot_from_pxe;
 
 sub run {
-    my $self = shift;
     if (uses_qa_net_hardware() || get_var("PXEBOOT")) {
-        $self->boot_from_pxe::run();
+        boot_from_pxe::run;
         return;
     }
     if (is_s390x()) {
         if (check_var("BACKEND", "s390x")) {
-            $self->bootloader_s390::run();
+            bootloader_s390::run();
             return;
         }
         else {
-            $self->bootloader_zkvm::run();
+            bootloader_zkvm::run();
             return;
         }
     }
     if (check_var('BACKEND', 'svirt') && is_x86_64()) {
         set_bridged_networking();
         if (is_hyperv()) {
-            $self->bootloader_hyperv::run();
+            bootloader_hyperv::run();
         }
         else {
-            $self->bootloader_svirt::run();
+            bootloader_svirt::run();
         }
     }
     # Load regular bootloader for all qemu backends and for x84_86 systems,
     # except Xen PV as id does not have VNC (bsc#961638).
     if (check_var('BACKEND', 'qemu') || (check_var('BACKEND', 'svirt') && !(check_var('VIRSH_VMM_FAMILY', 'xen') && check_var('VIRSH_VMM_TYPE', 'linux')))) {
         if (get_var('UEFI')) {
-            $self->bootloader_uefi::run();
+            bootloader_uefi::run();
             return;
         }
         else {
-            $self->bootloader::run();
+            bootloader::run();
             return;
         }
     }
-    # Wrapped call for powerVM
-    if (get_var('BACKEND', '') =~ /spvm|pvm_hmc/) {
-        $self->bootloader::run();
-        return;
+    else {
+        die 'No bootloader found for the current job settings.';
     }
 }
 

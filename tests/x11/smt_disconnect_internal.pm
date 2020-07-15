@@ -8,7 +8,7 @@
 # without any warranty.
 
 # Summary: Disconnected SMT internal
-# Maintainer: Wei Gao <wegao@suse.com>
+# Maintainer: Dehai Kong <dhkong@suse.com>
 
 use base "x11test";
 use strict;

@@ -8,18 +8,11 @@
 # without any warranty.
 
 # Summary: Remove quiet kernel option
-# - On SLE12PS2 and aarch64, run commands and wait for screen change
-# - Otherwise:
-#   - Load grub variables from /etc/default/grub
-#   - Remove "quiet" from $GRUB_CMDLINE_LINUX_DEFAULT
-#   - If FIPS_ENABLED is set, add fips=1 to new grub command line
-#   - If encryption is enabled, add "boot=<boot device>" to grub command line
-#   - Apply all changes by running: "grub2-mkconfig -o /boot/grub2/grub.cfg"
 # Maintainer: Dominik Heidler <dheidler@suse.de>
 
-use base 'y2_installbase';
 use strict;
 use warnings;
+use base "y2logsstep";
 use testapi;
 
 sub run {
@@ -34,6 +27,10 @@ sub run {
         }
     }
     push @cmds, 'sed -i "s#GRUB_CMDLINE_LINUX_DEFAULT=\"[^\"]*\"#GRUB_CMDLINE_LINUX_DEFAULT=\"$new_cmdline\"#" /etc/default/grub';
+    if (script_run('! grep -q resume=.*by-path /proc/cmdline')) {
+        record_soft_failure "boo#1079537 - kernel argument noresume ignored - resume from suspend failing when the image started on different VM";
+        push @cmds, 'sed -i "s/# GRUB_DISABLE_LINUX_UUID=true/GRUB_DISABLE_LINUX_UUID=true/" /etc/default/grub';
+    }
     push @cmds, 'grub2-mkconfig -o /boot/grub2/grub.cfg';
 
     # Slow type for 12-SP2 aarch64 image creation test to try to avoid filling up the key event queue

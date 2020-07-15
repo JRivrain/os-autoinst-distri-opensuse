@@ -1,6 +1,8 @@
 # SUSE’s openQA tests
 #
-# Copyright © 2018-2019 IBM Corp.
+# Copyright © 2009-2013 Bernhard M. Wiedemann
+# Copyright © 2012-2018 SUSE LLC
+# Copyright (C) 2018 IBM Corp.
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -25,11 +27,16 @@ sub run {
     assert_script_run "echo -e \"$REPO_SUSE\" > /etc/zypp/repos.d/sles.repo";
     assert_script_run "cat /etc/zypp/repos.d/sles.repo";
 
-    zypper_call "in kernel-default-debuginfo";
+    assert_script_run("zypper in -y kernel-default-debuginfo", timeout => 900);
     assert_script_run "[ -f /boot/vmlinux-4.4.73-5-default.gz ] && gunzip /boot/vmlinux-4.4.73-5-default.gz || true";
 
     $self->execute_script('vmcon.sh', '', 3000);
 
+}
+
+sub post_fail_hook {
+    my $self = shift;
+    #    $self->export_logs();
 }
 
 sub test_flags {

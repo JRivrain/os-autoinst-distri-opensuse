@@ -11,12 +11,6 @@
 # Case#1479413: Firefox: Full Screen Browsing
 
 # Summary: Case#1479413: Firefox: Full Screen Browsing
-# - Launch xterm, kill firefox, cleanup previous firefox configuration, launch
-# firefox
-# - Open "file:///usr/share/w3m/w3mhelp.html" and check
-# - Switch firefox to fullscreen mode
-# - Switch back to windowed mode
-# - Exit firefox
 # Maintainer: wnereiz <wnereiz@gmail.com>
 
 use strict;
@@ -35,7 +29,7 @@ sub run {
     send_key "f11";
     assert_screen('firefox-fullscreen-enter', 90);
 
-    wait_still_screen 2, 4;
+    sleep 1;
     send_key "f11";
     assert_screen('firefox-fullscreen-page', 90);
 

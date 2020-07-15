@@ -8,17 +8,6 @@
 # without any warranty.
 #
 # Summary: Enable kdump and verify it's enabled
-# - Run "echo "kernel.softlockup_panic = 1" >> /etc/sysctl.conf"
-# - Run "sysctl -p"  and check for "kernel.softlockup_panic = 1"
-# - Stop packagekit service
-# - Install yast2-kdump kdump crash
-# - If distro is sle, add kernel debuginfo repository
-# - Otherwise, add repository from REPO_OSS_DEBUGINFO variable
-# - Install kernel debuginfo
-# - Add crashkernel parameters on grub commandline
-# - Enable kdump service
-# - Reboot
-# - Check if kdump is enabled
 # Maintainer: Yong Sun <yosun@suse.com>
 package enable_kdump;
 
@@ -30,10 +19,11 @@ use utils 'zypper_call';
 use power_action_utils 'power_action';
 use kdump_utils;
 use testapi;
+use Utils::Backends 'use_ssh_serial_console';
 
 sub run {
     my $self = shift;
-    select_console 'root-console';
+    check_var('BACKEND', 'ipmi') ? use_ssh_serial_console : select_console 'root-console';
 
     # Also panic when softlockup
     # workaround bsc#1104778, skip s390x in 12SP4
@@ -49,7 +39,7 @@ sub run {
 
     # Reboot
     power_action('reboot');
-    $self->wait_boot(bootloader_time => 200);
+    $self->wait_boot;
     select_console('root-console');
     die "Failed to enable kdump" unless kdump_is_active;
 }

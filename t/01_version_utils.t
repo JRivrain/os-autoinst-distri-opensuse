@@ -3,12 +3,19 @@ use warnings;
 use Test::More;
 use Test::Exception;
 use Test::Warnings;
+use FindBin;
+
+# This is required to be able to read
+# packages in distri's lib/ folder.
+# Alternatively it can be supplied as -I option
+# while running prove.
+use lib ("$FindBin::Bin/lib", "$FindBin::Bin/../lib");
 
 use testapi qw(check_var get_var set_var);
 
 subtest 'check_version' => sub {
     # compare versions if possible
-    ok version_utils::check_version($_, '15.5'),  "check $_, 15.5" for qw(>15.0 <15.10);
+    ok version_utils::check_version($_, '15.5'), "check $_, 15.5" for qw(>15.0 <15.10);
     ok !version_utils::check_version($_, '15.5'), "check $_, 15.5" for qw(=15.50 >=15.10);
 
     # compare strings if not
@@ -23,9 +30,6 @@ subtest 'check_version' => sub {
     for (qw(=1.3+ >1.3+ <>1.3 > 12 abc)) {
         dies_ok { version_utils::check_version($_, '12-sp3') } "check $_, 12-sp3";
     }
-
-    ok version_utils::check_version($_, '10.5.0-Maria'), "check $_, 15.5"   for qw(>10.4.4 10.4+ >=10.4-Maria >10.3.0-MySQL);
-    ok !version_utils::check_version($_, '10.5.1'),      "check $_, 10.5.1" for qw(=10.4.9 <10.5.0);
 };
 
 subtest 'is_caasp' => sub {

@@ -25,7 +25,6 @@ use version_utils "is_upgrade";
 use strict;
 use warnings;
 use x11utils 'turn_off_kde_screensaver';
-use Utils::Architectures qw(is_aarch64);
 
 sub send_key_and_wait {
     my ($key, $wait_time) = @_;
@@ -35,13 +34,6 @@ sub send_key_and_wait {
 }
 
 sub run {
-    if (get_netboot_mirror) {
-        select_console 'install-shell';
-        # Force use of the matching repo
-        assert_script_run("sed -i'' 's#ZyppRepoURL:.*\$#ZyppRepoURL: " . get_netboot_mirror . "#g' /usr/sbin/start-install.sh");
-        select_console 'x11';
-    }
-
     # stop packagekit, root password is not needed on live system
     x11_start_program('systemctl stop packagekit.service', target_match => 'generic-desktop');
     turn_off_kde_screensaver;
@@ -49,14 +41,7 @@ sub run {
         assert_and_click 'live-upgrade';
     }
     else {
-        if (is_aarch64) {
-            # On aarch64 there is sporadic issue when "Install" icon is clicked too long,
-            # so that context menu is called instead of opening the wizard.
-            x11_start_program('xdg-su -c "/usr/sbin/start-install.sh"', target_match => 'maximize');
-        }
-        else {
-            assert_and_click 'live-installation';
-        }
+        assert_and_click 'live-installation';
     }
     assert_and_click 'maximize';
     mouse_hide;

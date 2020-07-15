@@ -1,8 +1,0 @@
----
-name:         wsl_main.yaml
-description:  >
-      WSL smoke test on Windows 10 image
-schedule:
-  - wsl/boot_windows
-  - wsl/prepare_wsl_feature
-  - wsl/firstrun

@@ -36,17 +36,12 @@ tidy-check: check-links
 	tools/tidy --check
 
 .PHONY: tidy
-tidy: tools/tidy
-	$< --only-changed
-	@echo "[make] Tidy called over modified/new files only. For a full run use make tidy-full"
-
-.PHONY: tidy-full
-tidy-full: tools/tidy
-	$<
+tidy:
+	tools/tidy
 
 .PHONY: unit-test
 unit-test:
-	prove -l -Ios-autoinst/ t/
+	prove -Ios-autoinst/ t/
 
 .PHONY: test-compile
 test-compile: check-links
@@ -58,21 +53,7 @@ test-compile-changed: os-autoinst/
 
 .PHONY: test-yaml-valid
 test-yaml-valid:
-	@# Get list of changed yaml files. We only want to lint changed files for
-	@# now because yamllint complains about a lot of existing files
-	$(eval YAMLS=$(shell sh -c "git ls-files schedule/ test_data/ | grep '/.*\.y.\?ml$$'"))
-	export PERL5LIB=${PERL5LIB_} ; tools/test_yaml_valid $(YAMLS);\
-	$(eval CHANGED_YAMLS=$(shell sh -c "git --no-pager diff --diff-filter=dr --name-only master | grep '\(schedule\|test_data\)/.*\.y.\?ml$$'"))
-	if test -n "$(CHANGED_YAMLS)"; then \
-	  which yamllint >/dev/null 2>&1 || echo "Command 'yamllint' not found, can not execute YAML syntax checks";\
-	  yamllint -c .yamllint $(CHANGED_YAMLS);\
-	else \
-	  echo "No yamls modified.";\
-	fi
-
-.PHONY: test-modules-in-yaml-schedule
-test-modules-in-yaml-schedule:
-	export PERL5LIB=${PERL5LIB_} ; tools/detect_nonexistent_modules_in_yaml_schedule `git diff --diff-filter=d --name-only --exit-code $$(git merge-base master HEAD) | grep '^schedule/*'`
+	export PERL5LIB=${PERL5LIB_} ; tools/test_yaml_valid
 
 .PHONY: test-metadata
 test-metadata:
@@ -89,7 +70,7 @@ test-merge:
 	  FILES=$$(git diff --name-only FETCH_HEAD `git merge-base FETCH_HEAD master 2>/dev/null` | grep 'tests.*pm') ;\
 	  for file in $$FILES; do if test -f $$file; then \
 	    tools/check_metadata $$file || touch failed; \
-	    git --no-pager grep wait_idle $$file && touch failed; \
+	    git grep -q wait_idle $$file && touch failed; \
 	    ${PERLCRITIC} $$file || (echo $$file ; touch failed) ;\
 	  fi ; done; \
 	fi
@@ -108,7 +89,7 @@ test-spec:
 	tools/update_spec --check
 
 .PHONY: test-static
-test-static: tidy-check test-yaml-valid test-modules-in-yaml-schedule test-merge test-dry test-no-wait_idle test-deleted-renamed-referenced-files test-unused-modules-changed test-soft_failure-no-reference test-spec test-invalid-syntax
+test-static: tidy-check test-yaml-valid test-merge test-dry test-no-wait_idle test-unused-modules test-soft_failure-no-reference test-spec
 
 .PHONY: test
 ifeq ($(TESTS),compile)
@@ -121,31 +102,16 @@ else
 test: unit-test test-static test-compile perlcritic
 endif
 
-PERLCRITIC=PERL5LIB=tools/lib/perlcritic:$$PERL5LIB perlcritic --quiet --stern --include "strict" --include Perl::Critic::Policy::HashKeyQuote
+PERLCRITIC=PERL5LIB=tools/lib/perlcritic:$$PERL5LIB perlcritic --quiet --gentle --include "strict"
 
 .PHONY: perlcritic
 perlcritic: tools/lib/
-	${PERLCRITIC} $$(git ls-files -- '*.p[ml]' ':!:data/')
-
-.PHONY: test-unused-modules-changed
-test-unused-modules-changed:
-	@echo "[make] Unused modules check called over modified/new files only. For a full run use make test-unused-modules-full"
-	tools/detect_unused_modules -m `git --no-pager diff --name-only --diff-filter=d $$(git merge-base master HEAD) | grep '^tests/*'`
-	tools/detect_unused_modules -m `git --no-pager diff --unified=0 $$(git merge-base master HEAD) products/* | grep -oP "^-.*loadtest.*[\"']\K[^\"'].+(?=[\"'])"`
-	tools/detect_unused_modules -m `git --no-pager diff --unified=0 $$(git merge-base master HEAD) schedule/* | grep -oP "^-\s+- [\"']?\K.*(?=[\"']?)" | grep -v '{{'`
+	${PERLCRITIC} $$(git ls-files "*.p[ml]")
 
 .PHONY: test-unused-modules
 test-unused-modules:
-	tools/detect_unused_modules -a
-
-.PHONY: test-deleted-renamed-referenced-files
-test-deleted-renamed-referenced-files:
-	tools/test_deleted_renamed_referenced_files `git diff --name-only --exit-code --diff-filter=DR $$(git merge-base master HEAD) | grep '^test*'`
+	tools/detect_unused_modules
 
 .PHONY: test-soft_failure-no-reference
 test-soft_failure-no-reference:
 	@! git --no-pager grep -E -e 'soft_failure\>.*\;' --and --not -e '([$$0-9a-z]+#[$$0-9]+|fate.suse.com/[0-9]|\$$[a-z]+)' lib/ tests/
-
-.PHONY: test-invalid-syntax
-test-invalid-syntax:
-	tools/check_invalid_syntax

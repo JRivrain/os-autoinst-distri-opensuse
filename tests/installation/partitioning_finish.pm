@@ -9,19 +9,16 @@
 # without any warranty.
 
 # Summary: Rework the tests layout.
-# - Wait for a screen change
-# - Send next and wait for partioning resume screen
 # Maintainer: Alberto Planas <aplanas@suse.com>
 
-use base 'y2_installbase';
 use strict;
 use warnings;
+use base "y2logsstep";
 use testapi;
 
 sub run {
     wait_still_screen();
     send_key $cmd{next};
-    wait_still_screen();
     assert_screen "after-partitioning";
 }
 

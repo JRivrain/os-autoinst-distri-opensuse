@@ -12,12 +12,12 @@
 # Maintainer: Joyce Na <jna@suse.de>
 
 package run_perf_case;
-use base 'y2_installbase';
 use ipmi_backend_utils;
 use strict;
 use power_action_utils 'power_action';
 use warnings;
 use testapi;
+use base "y2logsstep";
 use File::Basename;
 use Utils::Backends 'use_ssh_serial_console';
 
@@ -25,10 +25,7 @@ sub run_one_by_one {
     my $case   = get_var("CASE_NAME");
     my $repeat = get_var("CASE_REPEAT");
     my $timeout //= 180;
-    my $i         = 1;
-    my $fail_path = get_var("FAIL_PATH");
-    my $fail_list = get_var("FAIL_LIST");
-
+    my $i = 1;
 
     # create run list
     assert_script_run("echo \'#!/bin/bash\' > /root/qaset/list");
@@ -42,17 +39,12 @@ sub run_one_by_one {
     assert_script_run("echo \"$case\" >> /root/qaset/list");
     assert_script_run("echo \')\' >> /root/qaset/list");
     for (; $i <= $repeat; $i++) {
-        # clean fail.list
-        script_run("rm $fail_path/$fail_list");
         assert_script_run("/usr/share/qa/qaset/qaset reset");
         assert_script_run("/usr/share/qa/qaset/run/performance-run.upload_Beijing");
         my $time_out = get_var("RUN_TIME_MINUTES");
         while (1) {
             #wait for case running completd with /var/log/qaset/control/DONE
             if (script_run("ls /var/log/qaset/control/ | grep DONE") == 0) {
-                if (script_run("ls $fail_path | grep $fail_list") == 0) {
-                    die "Test failed";
-                }
                 last;
             }
             if ($time_out == 0) {
@@ -63,7 +55,7 @@ sub run_one_by_one {
             --$time_out;
         }
         if ($i == $repeat) {
-            power_action('poweroff', textmode => 1, keepconsole => 1);
+            power_action('poweroff');
         }
         else {
             power_action('reboot', textmode => 1, keepconsole => 1);
@@ -76,15 +68,6 @@ sub run_one_by_one {
 
 sub run {
     run_one_by_one;
-}
-
-sub post_fail_hook {
-    my ($self) = @_;
-    script_run("dmesg > /tmp/dmesg.log");
-    upload_logs "/tmp/dmesg.log";
-    upload_logs "/var/log/messages";
-    my $screenlog = script_output("ls -rt /var/log/qaset/calls | tail -n 1");
-    upload_logs "/var/log/qaset/calls/$screenlog";
 }
 
 sub test_flags {

@@ -7,29 +7,26 @@
 # notice and this notice are preserved.  This file is offered as-is,
 # without any warranty.
 
-# Summary: Test OpenVPN on two machines - this one is the server.
-#  * Shared key is generated, server configured and started
-#  * After client connects, both sides perform ping, then disconnect
-#  * Easy-RSA CA infrastructure is generated, server configured and started
-#  * After client connects, both sides perform ping, then disconnect
+# Summary: Test OpenVPN on two machines - this one is server.
 # Maintainer: Pavel Dostál <pdostal@suse.cz>
 
 use base 'consoletest';
 use testapi;
 use lockapi;
-use y2_module_guitest;
+use y2x11test;
 use mm_network;
 use mmapi 'wait_for_children';
 use utils qw(systemctl zypper_call exec_and_insert_password);
-use repo_tools 'add_qa_head_repo';
 use strict;
 use warnings;
 
 sub run {
     select_console "root-console";
 
+    my $qa_head_repo = get_var('QA_HEAD_REPO', '');
+    zypper_call("ar -Gf '$qa_head_repo'/ qa-ibs");
+
     # Install openvpn, generate static key
-    add_qa_head_repo;
     zypper_call('in openvpn easy-rsa');
     assert_script_run('cd /etc/openvpn');
     assert_script_run('openvpn --genkey --secret static.key');
@@ -55,7 +52,7 @@ secret /etc/openvpn/static.key" > static.conf));
 
     # Generate certificates
     assert_script_run("easyrsa init-pki");
-    assert_script_run("easyrsa gen-dh",                              600);
+    assert_script_run("easyrsa gen-dh",                              240);
     assert_script_run("yes '' | easyrsa build-ca nopass",            120);
     assert_script_run("yes '' | easyrsa gen-req server nopass",      120);
     assert_script_run("echo 'yes' | easyrsa sign-req server server", 120);

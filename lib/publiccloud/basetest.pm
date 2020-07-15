@@ -23,15 +23,12 @@ use warnings;
 sub provider_factory {
     my ($self) = @_;
     my $provider;
-
-    die("Provider already initialized") if ($self->{provider});
-
     if (check_var('PUBLIC_CLOUD_PROVIDER', 'EC2')) {
         $provider = publiccloud::ec2->new(
             key_id     => get_var('PUBLIC_CLOUD_KEY_ID'),
             key_secret => get_var('PUBLIC_CLOUD_KEY_SECRET'),
             region     => get_var('PUBLIC_CLOUD_REGION', 'eu-central-1'),
-            username   => get_var('PUBLIC_CLOUD_USER', 'ec2-user')
+            username   => 'ec2-user'
         );
 
     }
@@ -42,7 +39,7 @@ sub provider_factory {
             region       => get_var('PUBLIC_CLOUD_REGION', 'westeurope'),
             tenantid     => get_var('PUBLIC_CLOUD_TENANT_ID'),
             subscription => get_var('PUBLIC_CLOUD_SUBSCRIPTION_ID'),
-            username     => get_var('PUBLIC_CLOUD_USER', 'azureuser')
+            username     => 'azureuser'
         );
     }
     elsif (check_var('PUBLIC_CLOUD_PROVIDER', 'GCE')) {
@@ -55,7 +52,7 @@ sub provider_factory {
             client_id           => get_var('PUBLIC_CLOUD_CLIENT_ID'),
             region              => get_var('PUBLIC_CLOUD_REGION', 'europe-west1-b'),
             storage_name        => get_var('PUBLIC_CLOUD_STORAGE', 'openqa-storage'),
-            username            => get_var('PUBLIC_CLOUD_USER', 'susetest')
+            username            => 'susetest'
         );
     }
     else {
@@ -63,7 +60,8 @@ sub provider_factory {
     }
 
     $provider->init();
-    $self->{provider} = $provider;
+    $self->{provider} //= [];
+    push(@{$self->{provider}}, $provider);
     return $provider;
 }
 
@@ -79,15 +77,9 @@ sub _cleanup {
 
     eval { $self->cleanup(); } or bmwqemu::fctwarn($@);
 
-    my $flags = $self->test_flags();
-    # currently we have two cases when cleanup of image will be skipped:
-    # 1. Calling module needs to have publiccloud_multi_module => 1 test flag
-    # and not have fatal => 1. Job should not have result = 'fail'
-    return if ($flags->{publiccloud_multi_module} && !($self->{result} eq 'fail' && $flags->{fatal}));
-    # 2. Job should have PUBLIC_CLOUD_NO_CLEANUP defined and job should have result = 'fail'
-    return if ($self->{result} eq 'fail' && get_var('PUBLIC_CLOUD_NO_CLEANUP_ON_FAILURE'));
-    if ($self->{provider}) {
-        eval { $self->{provider}->cleanup(); } or bmwqemu::fctwarn($@);
+    $self->{provider} //= [];
+    for my $provider (@{$self->{provider}}) {
+        eval { $provider->cleanup(); } or bmwqemu::fctwarn($@);
     }
 }
 
@@ -100,5 +92,8 @@ sub post_run_hook {
     my ($self) = @_;
     $self->_cleanup() unless $self->{cleanup_called};
 }
+
+
+
 
 1;

@@ -1,4 +1,4 @@
-# Copyright © 2016-2020 SUSE LLC
+# Copyright © 2016-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -17,7 +17,6 @@ use version_utils qw(is_sle is_desktop_installed is_upgrade is_sles4sap);
 use migration;
 use registration;
 use qam;
-use Utils::Backends 'is_pvm';
 
 
 sub patching_sle {
@@ -42,13 +41,10 @@ sub patching_sle {
             set_var('HDD_SP2ORLATER', 1);
         }
         # disable existing repos temporary
-        zypper_call "lr";
-        zypper_call "mr --disable --all";
+        assert_script_run("zypper lr && zypper mr --disable --all");
         save_screenshot;
-        # Set SCC_PROXY_URL if needed
-        set_scc_proxy_url if ((check_var('HDDVERSION', get_var('ORIGINAL_TARGET_VERSION')) && is_upgrade()));
         sle_register("register");
-        zypper_call('lr -d');
+        assert_script_run('zypper lr -d');
     }
 
     # add test repositories and logs the required patches
@@ -67,9 +63,9 @@ sub patching_sle {
             assert_script_run 'sync', 600;
             # Open gdm debug info for poo#45236, this issue happen sometimes in openqa env
             script_run('sed -i s/#Enable=true/Enable=true/g /etc/gdm/custom.conf');
-            # Remove '-f' for reboot for poo#65226
-            type_string "reboot\n";
-            reconnect_mgmt_console if is_pvm;
+            # Workaround for test failed of the reboot operation need to wait some jobs done
+            # Add '-f' to force the reboot to avoid the test be blocked here
+            type_string "reboot -f\n";
             $self->wait_boot(textmode => !is_desktop_installed(), ready_time => 600, bootloader_time => 300, nologin => $nologin);
             # Setup again after reboot
             $self->setup_sle();
@@ -106,7 +102,7 @@ sub patching_sle {
 
     # RMT didn't mirror all repos, cannot use enable all
     if (!get_var("SMT_URL")) {
-        zypper_call("mr --enable --all");
+        assert_script_run("zypper mr --enable --all");
     }
 
     # Disable old repositories during AutoYaST driven upgrade
@@ -221,13 +217,7 @@ sub install_patterns {
             $pt .= '*';
             $pcm = 1;
         }
-        # workround for bsc#1034541
-        if (($pt =~ /sap_server/) && is_sle('=11-SP4')) {
-            record_soft_failure 'bsc#1034541';
-            next;
-        }
-        zypper_call("in -t pattern $pt", timeout => 1800);
-
+        zypper_call "in -t pattern $pt";
     }
 }
 
@@ -242,14 +232,7 @@ sub sle_register {
             # that do not show license agreement during installation but do when registering
             # after install
             set_var('IN_PATCH_SLE', 1);
-            # To register the product and addons via commands, only for sle 12+
-            if (get_var('ADDON_REGBYCMD') && is_sle('12+')) {
-                register_product();
-                register_addons_cmd();
-            }
-            else {
-                yast_scc_registration();
-            }
+            yast_scc_registration();
             # Once SCC registration is done, disable IN_PATCH_SLE so it does not interfere
             # with further calls to accept_addons_license (in upgrade for example)
             set_var('IN_PATCH_SLE', 0);
@@ -265,21 +248,6 @@ sub sle_register {
                 assert_script_run("chmod +x $setup_script");
                 assert_script_run("echo y | ./$setup_script $smt_url/center/regsvc");
                 assert_script_run("suse_register -n");
-            }
-            # NCC can be replaced by SCC even for SLE 11
-            # Needed to workaround a bug with NCC and LTSS module in some cases, see bsc#1158950
-            elsif (get_var('SLE11_USE_SCC')) {
-                my $reg_code = get_required_var('NCC_REGCODE');
-                my $reg_mail = get_var('NCC_MAIL');               # email address is not mandatory for SCC
-                assert_script_run("sed -i '/^url[[:space:]]*/s|.*|url = https://scc.suse.com/ncc/center/regsvc|' /etc/suseRegister.conf");
-                if (get_var('NCC_REGCODE_SDK')) {
-                    my $reg_code_sdk = get_required_var('NCC_REGCODE_SDK');
-                    zypper_call("ar http://schnell.suse.de/SLE11/SLE-11-SP4-SDK-GM/s390x/DVD1/ sdk");
-                    zypper_call("in --auto-agree-with-licenses sle-sdk-release");
-                    assert_script_run("suse_register -a email=$reg_mail -a regcode-sles=$reg_code -a regcode-sdk=$reg_code_sdk", 300);
-                } else {
-                    assert_script_run("suse_register -a email=$reg_mail -a regcode-sles=$reg_code", 300);
-                }
             }
             # Otherwise, register SLE 11 to NCC server
             else {

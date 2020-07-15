@@ -9,22 +9,19 @@
 # without any warranty.
 
 # Summary: Verify installation starts and is in progress
-# - If install type is upgrade, handle conflict solution screen, license popup,
-# package selection, automatic changes
-# - If is standard installation, handle license popup
-# - If LIVECD, NICEVIDEO, UPGRADE are not defined or VIDEOMODE=text, monitor
-# install progress
-# - If USEIMAGES is set, check desktop install type (either kde, gnome or
-# textmode)
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
-use base 'y2_installbase';
 use strict;
 use warnings;
-use lockapi;
+use base "y2logsstep";
 use testapi;
-use mmapi;
-use version_utils qw(is_sle is_upgrade);
+use version_utils 'is_upgrade';
+
+sub check_bsc982138 {
+    if (check_screen('installation-details-view-remaining-time-gt2h', 5)) {
+        record_soft_failure 'bsc#982138: Remaining time estimation during installation shows >2h most of the time';
+    }
+}
 
 sub run {
     # start install
@@ -77,6 +74,7 @@ sub run {
 
         # view installation details
         send_key $cmd{instdetails};
+        check_bsc982138;
     }
     elsif (get_var("AUTOYAST")) {
         assert_screen("inst-packageinstallationstarted", $started_timeout);
@@ -107,8 +105,7 @@ sub run {
     if (!get_var("LIVECD")
         && !get_var("NICEVIDEO")
         && !get_var("UPGRADE")
-        && !check_var('VIDEOMODE', 'text')
-        && (!is_sle('=11-sp4') || !check_var('ARCH', 's390x') || !check_var('BACKEND', 's390x')))
+        && !check_var('VIDEOMODE', 'text'))
     {
         my $counter = 20;
         while ($counter--) {
@@ -116,6 +113,7 @@ sub run {
             last if check_screen 'installation-details-view', 10;
         }
         assert_screen 'installation-details-view';
+        check_bsc982138;
 
         if (get_var("USEIMAGES")) {
             if (check_var('DESKTOP', 'kde')) {
@@ -129,12 +127,7 @@ sub run {
             }
         }
     }
-    if (get_var('USE_SUPPORT_SERVER') && get_var('USE_SUPPORT_SERVER_REPORT_PKGINSTALL')) {
-        my $jobid_server = (get_parents())->[0] or die "USE_SUPPORT_SERVER_REPORT_PKGINSTALL set, but no parent supportserver job found";
-        # notify the supportserver about current status (e.g.: meddle_multipaths.pm)
-        mutex_create("client_pkginstall_start", $jobid_server);
-        record_info("Disk I/O", "Mutex \"client_pkginstall_start\" created");
-    }
 }
 
 1;
+

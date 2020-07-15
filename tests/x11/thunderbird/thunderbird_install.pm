@@ -8,10 +8,6 @@
 # without any warranty.
 
 # Summary: Thunderbird installation
-# - Go to text console
-# - Stop packagekit
-# - Install MozillaThunderbird
-# - Go to graphic console
 # Maintainer: Paolo Stivanin <pstivanin@suse.com>
 
 use base "x11test";

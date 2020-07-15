@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright (c) 2016-2020 SUSE LLC
+# Copyright (c) 2016-2018 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -13,10 +13,9 @@
 use base 'opensusebasetest';
 use strict;
 use warnings;
-use utils qw(zypper_call systemctl);
+use utils 'zypper_call';
 use testapi;
 use hacluster;
-use version_utils 'is_sle';
 
 sub run {
     # Installation of iSCSI client package(s) if needed
@@ -24,7 +23,7 @@ sub run {
 
     # Configuration of iSCSI client
     script_run("yast2 iscsi-client; echo yast2-iscsi-client-status-\$? > /dev/$serialdev", 0);
-    assert_screen 'iscsi-client-overview-service-tab', $default_timeout;
+    assert_screen 'iscsi-client-overview-service-tab';
     send_key 'alt-b';    # Start iscsi daemon on Boot
     wait_still_screen 3;
     send_key 'alt-i';    # Initiator name
@@ -36,13 +35,13 @@ sub run {
     wait_still_screen 3;
 
     # Go to Discovered Targets screen can take time
-    assert_screen 'iscsi-client-discovered-targets',     120;
-    send_key_until_needlematch 'iscsi-client-discovery', 'alt-d';
+    assert_screen 'iscsi-client-discovered-targets', 120;
+    send_key 'alt-d';    # Discovery
+    wait_still_screen 3;
     assert_screen 'iscsi-client-discovery';
     send_key 'alt-i';    # Ip address
     wait_still_screen 3;
-    my $iscsi_server = get_var('USE_SUPPORT_SERVER') ? 'ns' : get_required_var('ISCSI_SERVER');
-    type_string $iscsi_server;
+    type_string 'ns';
     wait_still_screen 3;
     send_key 'alt-n';    # Next
 
@@ -50,23 +49,20 @@ sub run {
     assert_screen 'iscsi-client-target-list';
     send_key 'alt-e';    # connEct
     assert_screen 'iscsi-client-target-startup';
-    send_key_until_needlematch 'iscsi-client-target-startup-manual-selected',    'alt-s';
-    send_key_until_needlematch 'iscsi-client-target-startup-automatic-selected', 'down';
+    wait_screen_change { send_key 'alt-s' };    # Startup
+    send_key 'down';
+    wait_still_screen 3;
+    send_key 'down';                            # Select 'automatic'
     assert_screen 'iscsi-client-target-startup-automatic-selected';
     send_key 'ret';
     wait_still_screen 3;
-    send_key 'alt-n';    # Next
+    send_key 'alt-n';                           # Next
 
     # Go to Discovered Targets screen can take time
     assert_screen 'iscsi-client-target-connected', 120;
-    send_key 'alt-o';    # Ok
+    send_key 'alt-o';                           # Ok
     wait_still_screen 3;
     wait_serial('yast2-iscsi-client-status-0', 90) || die "'yast2 iscsi-client' didn't finish";
-
-    if (is_sle('=15-SP1') && systemctl('-q is-active iscsi', ignore_failure => 1)) {
-        record_soft_failure('iscsi issue: bug bsc#1162078');
-        systemctl('start iscsi');
-    }
 
     # iSCSI LUN must be present
     assert_script_run 'ls -1 /dev/disk/by-path/ip-*-lun-*';

@@ -8,7 +8,7 @@
 # without any warranty.
 
 # Summary: Shotwell: Export images to folder
-# Maintainer: Zhaocong Jia <zcjia@suse.com> Grace Wang <grace.wang@suse.com>
+# Maintainer: Chingkai <qkzhu@suse.com>
 # Tags: tc#1503754
 
 use base "x11test";

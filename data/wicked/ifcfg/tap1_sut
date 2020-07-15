@@ -1,4 +1,4 @@
-STARTMODE='auto'
+STARTMODE='manual'
 BOOTPROTO='static'
 TUNNEL='tap'
 TUNNEL_SET_OWNER='root'

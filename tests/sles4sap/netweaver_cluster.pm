@@ -14,7 +14,7 @@ use base "sles4sap";
 use testapi;
 use lockapi;
 use hacluster;
-use utils 'systemctl';
+use utils qw(ensure_serialdev_permissions systemctl);
 use strict;
 use warnings;
 
@@ -26,7 +26,7 @@ sub run {
     my $alias        = get_required_var('INSTANCE_ALIAS');
     my $lun          = get_required_var('INSTANCE_LUN');
     my $cluster_name = get_cluster_name;
-    my ($ip, $netmask) = split '/', get_required_var('INSTANCE_IP_CIDR');
+    my ($ip, $netmask) = split '/', get_required_var('INSTANCE_IP');
 
     # Set SAP variables
     my $pscmd  = $self->set_ps_cmd("$type");
@@ -35,19 +35,22 @@ sub run {
     # Synchronize the nodes
     barrier_wait "NW_CLUSTER_INSTALL_$cluster_name";
 
-    $self->select_serial_terminal;
+    select_console 'root-console';
 
-    # Stop the NW instance to add it in the cluster stack
-    $self->user_change;
+    # Do stuff with SAP account
+    $self->become_sapadm;
     $self->test_version_info;
     $self->test_instance_properties;
     $self->test_stop;
+    script_run "$pscmd | wc -l ; $pscmd";
+    save_screenshot;
 
-    # Disconnect SAP account
-    $self->reset_user_change;
+    # Rollback changes to $testapi::serialdev and close the window
+    type_string "exit\n";
+    ensure_serialdev_permissions;
 
     # Some file changes are needed for HA
-    $self->select_serial_terminal;
+    select_console 'root-console';
 
     my $profile_file = "/usr/sap/$sid/SYS/profile/${sid}_${type}${instance_id}_${alias}";
 

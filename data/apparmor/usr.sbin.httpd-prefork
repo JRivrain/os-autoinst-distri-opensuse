@@ -40,7 +40,7 @@
   ^DEFAULT_URI {
     #include <abstractions/apache2-common>
     #include <abstractions/base>
-    #include <abstractions/php5>
+    #include <abstractions/php>
     #include <abstractions/ubuntu-browsers.d/user-files>
     #include <abstractions/user-tmp>
 

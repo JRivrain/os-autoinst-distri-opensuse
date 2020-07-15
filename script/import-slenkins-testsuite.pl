@@ -104,8 +104,8 @@ sub parse_node_file {
         $line =~ s/\$\{PROJECT_NAME\}/$project_name/g;
 
         if ($line =~ /^node\s+([^\s]+)$/) {
-            $node         = $1;
-            $network      = undef;
+            $node    = $1;
+            $network = undef;
             $nodes{$node} = {install => [], repos => [], disks => []};
         }
         elsif ($line =~ /^network\s+([^\s]+)$/) {
@@ -125,7 +125,7 @@ sub parse_node_file {
         }
         elsif ($line =~ /^subnet\s/ || $line =~ /^dhcp\s/ || $line =~ /^gateway\s/) {
             my ($param, $value) = split(/\s+/, $line);
-            $value                        = 0      if $value eq 'no';
+            $value = 0 if $value eq 'no';
             $networks{$network}->{$param} = $value if defined $network;
         }
         elsif ($line =~ /(^repository|^repo)\s+\$\{CHANNEL_(.*)_.*\}$/) {

@@ -19,11 +19,11 @@ use warnings;
 use testapi;
 
 sub run {
-    my ($self, $ctx) = @_;
+    my ($self) = @_;
     my $config = '/etc/wicked/ifconfig/gre.xml';
     record_info('Info', 'Create a GRE interface from wicked XML files');
     $self->get_from_data('wicked/xml/gre.xml', $config);
-    $self->setup_tunnel($config, 'gre1', $ctx->iface());
+    $self->setup_tunnel($config, 'gre1');
     my $res = $self->get_test_result('gre1');
     die if ($res eq 'FAILED');
 }

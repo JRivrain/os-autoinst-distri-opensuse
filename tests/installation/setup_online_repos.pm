@@ -12,7 +12,7 @@
 #    Basically for Leap only. https://progress.opensuse.org/issues/9620
 # Maintainer: Max Lin <mlin@suse.com>
 
-use base 'y2_installbase';
+use base "y2logsstep";
 use strict;
 use warnings;
 use testapi;

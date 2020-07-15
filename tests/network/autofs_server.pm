@@ -9,26 +9,7 @@
 
 # Summary: It shares a dir via nfs for autofs testing, and another dir
 #          for testing nfsidmap functionality.
-# - If opensuse, enables repository 1 (zypper modifyrepo -e 1) and refresh
-# - Install package nfs-kernel-server
-# - Create directory /tmp/nfs/server
-# - Create file "file.txt" inside above directory with contents "It worked"
-# - Add "/tmp/nfs/server *(ro)" to end of /etc/exports
-# - Start nfs-server
-# - Run "systemctl --no-pager status nfs-server", check output for
-# "Active:\s*active"
-# - Run "echo N > /sys/module/nfsd/parameters/nfs4_disable_idmapping"
-# - Install nfsidmap
-# - Restart service nfs-idmapd
-# - Clear nfsidmap keyring "nfsidmap -c || true"
-# - Add user tux "useradd -m tux"
-# - Write "Hi tux" to /home/tux/tux.txt
-# - Run "chown tux:users" to /home/tux/tux.txt
-# - Append "/home/tux *(ro)" to /etc/exports
-# - Run "cat /etc/exports"
-# - Restart nfs-server
-# - Call AUTOFS_SUITE_READY
-# - Call AUTOFS_FINISHED
+#
 # Maintainer: Antonio Caristia <acaristia@suse.com> (autofs)
 # Maintainer: Timo Jyrinki <tjyrinki@suse.com> (nfsidmap)
 
@@ -36,7 +17,7 @@ use base 'consoletest';
 use testapi;
 use lockapi;
 use utils qw(systemctl zypper_call);
-use version_utils 'is_opensuse';
+use version_utils qw(is_opensuse);
 use strict;
 use warnings;
 
@@ -60,7 +41,7 @@ sub run {
     assert_script_run "echo N > /sys/module/nfsd/parameters/nfs4_disable_idmapping";
     zypper_call('in nfsidmap');
     systemctl 'restart nfs-idmapd';
-    assert_script_run "nfsidmap -c || true";
+    assert_script_run "nfsidmap -c";
     assert_script_run "useradd -m tux";
     assert_script_run "echo Hi tux > $nfsidmap_share_dir/tux.txt";
     assert_script_run "chown tux:users $nfsidmap_share_dir/tux.txt";

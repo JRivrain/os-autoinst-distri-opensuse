@@ -11,18 +11,6 @@
 # This test consists on quota, configuring and use a regular user to test quota .
 # If succeed, the test passes, proving that the connection is working.
 #
-# - Install quota and quota-nfs
-# - Restart quotaon
-# - Create a 100M ext3 file and mount
-# - Create a test directory inside it
-# - Run quotacheck
-# - Run setquota
-# - Run quotaon
-# - As user, create a file inside test filesystem
-# - Run quota
-# - Create a test file and run quota again
-# - Run repquota
-# - Cleanup
 # Maintainer: Marcelo Martins <mmartins@suse.cz>
 
 use base "consoletest";
@@ -60,7 +48,6 @@ sub run {
     #enable quota
     assert_script_run "quotaon /tmp/quota";
     # run user to use all quota
-    ensure_serialdev_permissions;
     select_console 'user-console';
     assert_script_run 'cd /tmp/quota/test-directory';
     assert_script_run 'touch first_file';

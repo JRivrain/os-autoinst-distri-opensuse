@@ -8,14 +8,12 @@
 # without any warranty.
 
 # Summary: Check default system role selection screen (only for SLE) and select system role. Added in SLE 12 SP2
-# - Check default system role
-# - Change system role according to SYSTEM_ROLE value
 # Maintainer: Jozef Pupava <jpupava@suse.com>, Joaquín Rivera <jeriveramoya@suse.com>
 # Tags: poo#16650, poo#25850
 
-use base 'y2_installbase';
 use strict;
 use warnings;
+use base "y2logsstep";
 use testapi;
 use version_utils qw(is_sle is_opensuse is_caasp);
 
@@ -37,13 +35,8 @@ sub change_system_role {
             send_key_until_needlematch "system-role-$system_role-selected", 'spc';     # enable role
         }
         else {
-            if (!check_screen("system-role-$system_role-selected")) {
-                # scroll down in case role is not visible straight away
-                send_key_until_needlematch "system-role-$system_role", 'down', 5, 1;
-                assert_and_click "system-role-$system_role";
-                # after role is selected, we get top of the list shown, so might need to scroll again
-                send_key_until_needlematch "system-role-$system_role-selected", 'down', 5, 1;
-            }
+            assert_and_click "system-role-$system_role";
+            assert_screen "system-role-$system_role-selected";
         }
     }
     else {
@@ -73,10 +66,6 @@ sub assert_system_role {
 }
 
 sub run {
-    return record_info(
-        "Skip screen",
-        "System Role screen is displayed only for x86_64 in SLE-12-SP5 due to it has more than one role available"
-    ) if (is_sle('=12-SP5') && !check_var('ARCH', 'x86_64'));
     assert_system_role;
 }
 

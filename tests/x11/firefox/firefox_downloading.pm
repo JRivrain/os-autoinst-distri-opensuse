@@ -1,7 +1,7 @@
 # SUSE's openQA tests
 #
 # Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2020 SUSE LLC
+# Copyright © 2012-2018 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -9,25 +9,6 @@
 # without any warranty.
 
 # Summary: Case#1436106: Firefox: Downloading
-# - Launch xterm, kill firefox, cleanup previous firefox configuration, launch
-# firefox
-# - Open firefox preferences, change download to "Always ask you where to save
-# files"
-# - Open url "http://mirrors.kernel.org/opensuse/distribution/leap/15.1/iso/openSUSE-Leap-15.1-DVD-x86_64.iso"
-# - Show download window
-# - Pause download
-# - Resume download and check
-# - Cancel download
-# - Retry download
-# - Cancel download and remove from history
-# - Open firefox preferences, change download to save files by default
-# - Open
-# url"http://mirrors.kernel.org/opensuse/distribution/leap/15.1/iso/openSUSE-Leap-15.1-DVD-x86_64.iso"
-# and "http://mirrors.kernel.org/opensuse/distribution/leap/42.3/iso/openSUSE-Leap-42.3-DVD-x86_64.iso"
-# - Open download library and check both downloads running
-# - Cancel both downloads
-# - Exit firefox
-
 # Maintainer: wnereiz <wnereiz@github>
 
 use strict;
@@ -36,8 +17,8 @@ use base "x11test";
 use testapi;
 use version_utils 'is_sle';
 
-my $dl_link_01 = "http://mirrors.kernel.org/opensuse/distribution/leap/15.1/iso/openSUSE-Leap-15.1-DVD-x86_64.iso";
-my $dl_link_02 = "http://mirrors.kernel.org/opensuse/distribution/leap/15.0/iso/openSUSE-Leap-15.0-DVD-x86_64.iso";
+my $dl_link_01 = "http://mirrors.kernel.org/opensuse/distribution/leap/42.2/iso/openSUSE-Leap-42.2-DVD-x86_64.iso";
+my $dl_link_02 = "http://mirrors.kernel.org/opensuse/distribution/leap/42.3/iso/openSUSE-Leap-42.3-DVD-x86_64.iso";
 
 sub dl_location_switch {
     my ($tg) = @_;
@@ -64,7 +45,7 @@ sub dl_save {
     if (match_has_tag 'firefox-downloading-openwith') {
         send_key "alt-s";
     }
-    assert_and_click('firefox-downloading-save_enabled', timeout => 90);
+    assert_and_click("firefox-downloading-save_enabled", "left", 90);
     # wait a little time at the beginning of the download to avoid busy disk writing
     wait_still_screen 3, 6;
 }
@@ -100,7 +81,7 @@ sub run {
 
     dl_location_switch("ask");
     dl_save($self, $dl_link_01);
-    send_key 'ctrl-shift-y';
+    assert_and_click('firefox-downloading-saving_dialog', 'left', 90);
     assert_screen('firefox-downloading-library', 90);
 
     # Pause

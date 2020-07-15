@@ -11,7 +11,7 @@
 # Note: fetchmail connects to a remote mail server (running dovecot)
 #   and fetch mails to localhost, then deliver mails (by postfix) to
 #   local mailbox.
-# Maintainer: Ben Chou <bchou@suse.com>
+# Maintainer: Qingming Su <qmsu@suse.com>
 
 use base "consoletest";
 use strict;

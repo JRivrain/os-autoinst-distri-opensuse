@@ -8,13 +8,9 @@
 # without any warranty.
 
 # Summary: Test SUSEConnect by registering system, module and deregistration.
-# - De-register system using SUSEConnect (-d, --cleanup,  --status-text)
-# - Register product using SCC_REGCODE code
-# - Add live patching if SLE < 15 using SCC_REGCODE_LIVE
-# - Check registering status
 # Maintainer: Juraj Hura <jhura@suse.com>
 
-use base "consoletest";
+use base "basetest";
 use strict;
 use warnings;
 use testapi;
@@ -27,8 +23,7 @@ sub run {
     my $arch          = get_required_var("ARCH");
     my $live_reg_code = get_required_var("SCC_REGCODE_LIVE");
 
-    my $self = shift;
-    $self->select_serial_terminal;
+    select_console 'root-console';
 
     # Make sure to start with de-registered system. In case the system is not registered this command will fail
     assert_script_run "SUSEConnect -d ||:";
@@ -39,7 +34,7 @@ sub run {
     zypper_call 'services';
     zypper_call 'products';
 
-    assert_script_run "SUSEConnect -r $reg_code", 180;
+    assert_script_run "SUSEConnect -r $reg_code";
     assert_script_run "SUSEConnect --status-text| grep -v 'Not Registered'";
     zypper_call 'ref';
     assert_script_run "SUSEConnect --list-extensions";

@@ -1,15 +1,15 @@
 # SUSE's openQA tests
 #
 # Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2019 SUSE LLC
+# Copyright © 2012-2018 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
 # notice and this notice are preserved.  This file is offered as-is,
 # without any warranty.
 
-# Summary: Test that desktop main menu shows up (support multiple DEs/WMs)
-# - open main menu and check that it matches the needle
+# Summary: Test desktop main menue shows up.
+#   Support for different WMs/DEs
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
 use base "x11test";
@@ -28,8 +28,9 @@ sub run {
     elsif (check_var("DESKTOP", "xfce")) {
         mouse_set(0, 0);
         sleep 1;
-        assert_screen_change { send_key "ctrl-esc" };    # open menu
-        send_key "up";                                   # go into Applications submenu
+        send_key "ctrl-esc";    # open menu
+        sleep 1;
+        send_key "up";          # go into Applications submenu
         mouse_hide(1);
     }
     else {

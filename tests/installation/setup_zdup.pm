@@ -16,12 +16,11 @@ use strict;
 use warnings;
 use testapi;
 use utils;
-use version_utils 'is_jeos';
 
 sub run {
     my ($self) = @_;
 
-    $self->wait_boot(ready_time => 600) unless is_jeos;
+    $self->wait_boot(ready_time => 600);
     if (get_var('ZDUP_IN_X')) {
         x11_start_program('xterm');
         become_root;
@@ -45,19 +44,16 @@ sub run {
             assert_script_run "snapper create --type pre --cleanup-algorithm=number --print-number --userdata important=yes --description 'b_zdup migration'";
         }
 
-        if (!is_jeos) {
-            # Remove the --force when this is fixed:
-            # https://bugzilla.redhat.com/show_bug.cgi?id=1075131
-            systemctl 'set-default --force multi-user.target';
-            # The CD was ejected in the bootloader test
-            type_string("/sbin/reboot\n");
+        # Remove the --force when this is fixed:
+        # https://bugzilla.redhat.com/show_bug.cgi?id=1075131
+        systemctl 'set-default --force multi-user.target';
+        # The CD was ejected in the bootloader test
+        type_string("/sbin/reboot\n");
 
-            reset_consoles;
-            $self->wait_boot(textmode => 1, bootloader_time => 200);
+        reset_consoles;
+        $self->wait_boot(textmode => 1);
 
-            select_console('root-console');
-        }
-
+        select_console('root-console');
     }
 
 }

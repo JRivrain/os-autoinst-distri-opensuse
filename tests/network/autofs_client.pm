@@ -9,31 +9,7 @@
 
 # Summary: It waits until a nfs server is ready and mounts a dir from that one.
 #          It also mounts another dir to check nfsidmap functionality.
-# - Calls check_autofs_service (start/stop/restart/status autofs)
-# - Calls setup_autofs_server (setup autofs config files)
-# - Restarts autofs daemon
-# - Checks output of "systemctl --no-pager status autofs" for "active/Active"
-# - Run "rpm -q nfsidmap"
-# - Run "nfsidmap -c || true" to clear keyring
-# - Run mkdir -p /mnt/test_nfsidmap
-# - Call barrier_wait for 'AUTOFS_SUITE_READY'
-# - Run ls /mnt/test/test
-# - Run mount | grep -e /mnt/test/test
-# - Check the contents of file /mnt/test/test/file.txt for "It worked"
-# - Run "mount -t nfs4 10.0.2.101:/home/tux /mnt/test_nfsidmap
-# - Run "ls /mnt/test/test"
-# - Run "ls -l /mnt/test_nfsidmap/tux.txt and check output for
-# m/nobody.*users.*tux.txt/ (file owner nobody)
-# - Run "cat /mnt/test_nfsidmap/tux.txt" and check file content for "Hi tux"
-# - Run "umount /mnt/test_nfsidmap/"
-# - Run "useradd -m tux"
-# - Run "nfsidmap -c || true"
-# - Run "mount -t nfs4 $10.0.2.101:/home/tux /mnt/test_nfsidmap"
-# - Run "ls -l /mnt/test_nfsidmap/tux.txt", checks output for
-# m/tux.*users.*tux.txt/ (user tux)
-# - Run "cat /mnt/test_nfsidmap/tux.txt", check output for "Hi tux"
-# - Run "umount /mnt/test_nfsidmap/"
-# - Call barrier_wait for 'AUTOFS_FINISHED'
+#
 # Maintainer: Antonio Caristia <acaristia@suse.com> (autofs)
 # Maintainer: Timo Jyrinki <tjyrinki@suse.com> (nfsidmap)
 
@@ -41,7 +17,7 @@ use base 'consoletest';
 use testapi;
 use lockapi;
 use autofs_utils qw(setup_autofs_server check_autofs_service);
-use utils 'systemctl';
+use utils qw(systemctl);
 use strict;
 use warnings;
 
@@ -65,8 +41,7 @@ sub run {
 
     # nfsidmap
     assert_script_run("rpm -q nfsidmap");
-    # Allow failing, it's to clear the keyring if one exists
-    assert_script_run("nfsidmap -c || true");
+    assert_script_run("nfsidmap -c");
     assert_script_run("mkdir -p $test_mount_dir_nfsidmap");
 
     barrier_wait 'AUTOFS_SUITE_READY';
@@ -84,7 +59,7 @@ sub run {
     validate_script_output("cat $test_mount_dir_nfsidmap/tux.txt",   sub { m/Hi tux/ });
     assert_script_run("umount $test_mount_dir_nfsidmap");
     assert_script_run("useradd -m tux");
-    assert_script_run("nfsidmap -c || true");
+    assert_script_run("nfsidmap -c");
     assert_script_run("mount -t nfs4 $nfs_server:$remote_mount_nfsidmap $test_mount_dir_nfsidmap");
     # Now 'tux' should be shown instead
     validate_script_output("ls -l $test_mount_dir_nfsidmap/tux.txt", sub { m/tux.*users.*tux.txt/ });

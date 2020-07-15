@@ -15,27 +15,6 @@
 #
 # Summary: Test with "usr.sbin.smbd" is in "enforce" mode and AppArmor is
 #          "enabled && active", access the shared directory should have no error.
-# - Install samba samba-client yast2-samba-client yast2-samba-server
-# - Restart smb
-# - Select X11 console
-# - Launch yast2 samba-server
-# - Fill Workgroup name as "WORKGROUP"
-# - Add a new share named "testdir", description "This is smbtest", type
-# directory, at "/home/testdir"
-# - Switch to text console
-# - Install expect
-# - Delete/create testuser
-# - Set a smb password for testuser
-# - Run "aa-enforce usr.sbin.smbd" and check for enforce mode confirmation
-# - Run aa-status to make sure profile is on enforce mode
-# - Restart apparmor and smb
-# - Go to X11 console
-# - Launch nautilus and access "smb://<server address>"
-# - Check for the shared dir
-# - Fill in user, workgroup, password and access the share directory
-# - Create and delete a test folder inside the share
-# - Switch back to text console
-# - Check audit.log for error messages related to smbd
 # Maintainer: llzhao <llzhao@suse.com>
 # Tags: poo#48776, tc#1695952
 
@@ -54,29 +33,21 @@ sub samba_server_setup {
     systemctl("restart smb");
 
     select_console 'x11';
-    y2_module_guitest::launch_yast2_module_x11(module => "samba-server", target_match => "samba-server-installation", match_timeout => 200);
-
+    y2x11test::launch_yast2_module_x11(module => "samba-server", target_match => "samba-server-installation", match_timeout => 200);
     send_key "alt-w";
-    send_key "ctrl-a";
-    send_key "delete";
     type_string("WORKGROUP");
-    send_key_until_needlematch("samba-server-configuration", 'alt-n', 10, 2);
+    send_key "alt-n";
+    assert_screen("samba-server-configuration");
     send_key "alt-s";
     assert_screen("samba-server-configuration-shares");
     send_key "alt-a";
     assert_screen("samba-server-configuration-shares-newshare");
     send_key "alt-n";
-    send_key "ctrl-a";
-    send_key "delete";
     type_string("$testdir");
     send_key "alt-a";
-    send_key "ctrl-a";
-    send_key "delete";
     type_string("This is smbtest");
     send_key "alt-d";
     send_key "alt-s";
-    send_key "ctrl-a";
-    send_key "delete";
     type_string("/home/$testdir");
     send_key "alt-o";
     assert_screen("samba-server-configuration-shares-newshare-createdir");
@@ -109,7 +80,6 @@ sub samba_client_access {
     send_key_until_needlematch("nautilus-connect-to-server", 'tab', 10, 2);
     type_string("smb://$ip");
     send_key "ret";
-    wait_still_screen(2);
 
     # Search the shared dir
     send_key_until_needlematch("nautilus-sharedir-search", 'ctrl-f', 5, 2);
@@ -121,24 +91,17 @@ sub samba_client_access {
     assert_screen("nautilus-selected-sharedir-access-passwd");
     send_key_until_needlematch("nautilus-registered-user-login", 'down', 5, 2);
     send_key "tab";
-    send_key "ctrl-a";
-    send_key "delete";
     type_string("$testuser");
     send_key "ret";
-    send_key "ctrl-a";
-    send_key "delete";
     type_string("WORKGROUP");
     send_key "ret";
-    send_key "ctrl-a";
-    send_key "delete";
     type_string("$pw");
     send_key "ret";
     assert_screen("nautilus-sharedir-opened");
 
     # Do some operations, e.g., create a test folder then delete it
     send_key "shift-ctrl-n";
-    wait_still_screen(2);
-    type_string("sub-testdir", wait_screen_changes => 10);
+    type_string("sub-testdir");
     send_key "ret";
     send_key_until_needlematch("nautilus-sharedir-delete", "delete", 5, 2);
     send_key "ret";

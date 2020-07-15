@@ -10,7 +10,7 @@
 # Summary: Actions required after upgrade
 #       Such as:
 #       1) Change the HDDVERSION to UPGRADE_TARGET_VERSION
-# Maintainer: Wei Gao <wegao@suse.com>
+# Maintainer: Qingming Su <qmsu@suse.com>
 
 use base "opensusebasetest";
 use strict;

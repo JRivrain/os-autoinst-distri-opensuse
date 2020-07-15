@@ -9,14 +9,7 @@
 # without any warranty.
 
 # Summary: Evince find feature
-# - Start evince and open test pdf from datadir
-# - Type CTRL-F and check
-# - Type text "To search for" and check
-# - Type CTRL-G 2 times and check
-# - Type CTRL-SHIFT-G 2 times and check
-# - Exit search with ESC
-# - Close evince
-# Maintainer: Huajian Luo <hluo@suse.com>
+# Maintainer: mitiao <mitiao@gmail.com>
 # Tags: tc#1436022
 
 use base "x11test";

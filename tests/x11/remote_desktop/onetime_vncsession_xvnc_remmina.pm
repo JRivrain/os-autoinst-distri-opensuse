@@ -8,7 +8,7 @@
 # without any warranty.
 #
 # Summary: Remote Login: One-time VNC Session with remmina and xvnc
-# Maintainer: Grace Wang <grace.wang@suse.com>
+# Maintainer: Chingkai <qkzhu@suse.com>
 # Tags: tc#1610354
 
 use strict;

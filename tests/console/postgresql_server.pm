@@ -8,21 +8,14 @@
 # without any warranty.
 
 # Summary: Postgres tests
-# - Install postgresql-server sudo
-# - Start postgresql service
-# - Check if postgresql was started and is running
-# - Populate postgresql with test db from data dir
-# - Run a select command
-# - Drop postgresql database
 # Maintainer: Ondřej Súkup <osukup@suse.cz>
 
 use base "consoletest";
 use strict;
 use warnings;
 use testapi;
-use utils 'zypper_call';
-use apachetest qw(setup_pgsqldb destroy_pgsqldb test_pgsql postgresql_cleanup);
-use Utils::Systemd 'systemctl';
+use utils;
+use apachetest;
 
 sub run {
     select_console 'root-console';

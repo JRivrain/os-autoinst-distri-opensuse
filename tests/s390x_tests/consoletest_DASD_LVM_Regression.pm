@@ -1,6 +1,8 @@
 # SUSE’s openQA tests
 #
-# Copyright © 2018-2019 IBM Corp.
+# Copyright © 2009-2013 Bernhard M. Wiedemann
+# Copyright © 2012-2018 SUSE LLC
+# Copyright (C) 2018 IBM Corp.
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -19,6 +21,7 @@ use strict;
 
 sub run {
     my $self = shift;
+    $self->copy_testsuite("DASD_LVM_Regression");
     assert_script_run("sed -i '/^\\s*filter/ s/filter/#filter/' /etc/lvm/lvm.conf");
     assert_script_run("rm -rf /root/log && mkdir /root/log && rm -rf /mnt/*");
 
@@ -31,6 +34,11 @@ sub run {
     $self->execute_script("04_LVM_snapshot_backup.sh", "",                     600);
 
     assert_script_run("rm -rf /root/log && mkdir /root/log && rm -rf /mnt/*");
+}
+
+sub post_fail_hook {
+    my $self = shift;
+    $self->export_logs();
 }
 
 sub test_flags {

@@ -9,16 +9,7 @@
 # without any warranty.
 
 # Summary: Gedit: save file
-# - Download test text file from datadir
-# - Launch gedit and open text test file
-# - Delete one line
-# - Select a line and copy
-# - Paste
-# - Go to end of document and type: "This file is opened, edited and saved by openQA!"
-# - Save and quit gedit
-# - Launch gedit, open text test file and check
-# - Exit gedit, erase test file
-# Maintainer: Huajian Luo <hluo@suse.com>
+# Maintainer: mitiao <mitiao@gmail.com>
 # Tags: tc#1436121
 
 use base "x11test";

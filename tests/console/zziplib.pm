@@ -1,6 +1,6 @@
 # SUSE"s openQA tests
 #
-# Copyright © 2019-2020 SUSE LLC
+# Copyright © 2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -9,14 +9,7 @@
 
 # Summary: test that uses zip command line tool to regression test.
 # If succeed, the test passes without error.
-# - Add SDK repository if necessary (devel package necessary for test)
-# - Create a temp dir, copy files from /usr/share/doc to it
-# - Compress all the files on temp dir in zip file
-# - List zip file contents using unzip-mem -l
-# - List zip file contents using unzip-mem -v
-# - List zip file contents using unzip-mem -t
-# - Unzip file using unzzip
-# - Cleanup files
+#
 # Maintainer: Marcelo Martins <mmartins@suse.cz>
 
 use base "consoletest";
@@ -24,19 +17,21 @@ use strict;
 use warnings;
 use testapi;
 use utils;
-use registration qw(cleanup_registration register_product add_suseconnect_product get_addon_fullname remove_suseconnect_product);
+use registration qw(cleanup_registration register_product add_suseconnect_product get_addon_fullname);
 use version_utils 'is_sle';
 
 sub run {
     my $filezip = "files.zip";
-    my $self    = shift;
-    $self->select_serial_terminal;
-
+    select_console "root-console";
     # development module needed for dependencies, released products are tested with sdk module
-    if (!main_common::is_updates_tests()) {
+    if (get_var('BETA')) {
+        my $sdk_repo = is_sle('15+') ? get_var('REPO_SLE_MODULE_DEVELOPMENT_TOOLS') : get_var('REPO_SLE_SDK');
+        zypper_ar 'http://' . get_var('OPENQA_URL') . "/assets/repo/$sdk_repo", 'SDK';
+    }
+    # maintenance updates are registered with sdk module
+    elsif (get_var('FLAVOR') !~ /Updates|Incidents/) {
         cleanup_registration;
         register_product;
-        add_suseconnect_product('sle-module-desktop-applications');
         add_suseconnect_product(get_addon_fullname('sdk'));
     }
     # create a tmp dir/files to work
@@ -66,10 +61,6 @@ sub run {
     assert_script_run "unzzip $filezip";
     #Clean files used:
     assert_script_run "cd ; rm -rf /tmp/zip ; rm /tmp/$filezip";
-    # unregister SDK
-    if (!main_common::is_updates_tests()) {
-        remove_suseconnect_product(get_addon_fullname('sdk'));
-    }
 }
 
 1;

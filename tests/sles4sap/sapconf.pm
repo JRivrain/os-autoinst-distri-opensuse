@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright © 2017-2020 SUSE LLC
+# Copyright © 2017-2018 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -8,15 +8,20 @@
 # without any warranty.
 
 # Summary: sapconf availability and basic commands to tuned-adm
-# Working both on plain SLE and SLES4SAP products
 # Maintainer: Alvaro Carvajal <acarvajal@suse.de>
 
 use base "sles4sap";
 use testapi;
 use version_utils qw(is_staging is_sle);
-use Utils::Architectures 'is_x86_64';
 use strict;
 use warnings;
+
+my @tuned_profiles = is_sle('>=15') ?
+  qw(balanced desktop latency-performance network-latency network-throughput
+  powersave sapconf saptune throughput-performance virtual-guest virtual-host)
+  : qw(balanced desktop latency-performance network-latency
+  network-throughput powersave sap-ase sap-bobj sap-hana sap-netweaver
+  throughput-performance virtual-guest virtual-host);
 
 my %sapconf_profiles = (
     hana   => 'sap-hana',
@@ -29,7 +34,7 @@ my %sapconf_profiles = (
 sub check_profile {
     my $current = shift;
     my $output  = script_output "tuned-adm active";
-    my $profile = is_sle('15+') ? $current : $sapconf_profiles{$current};
+    my $profile = is_sle('>=15') ? $current : $sapconf_profiles{$current};
     die "Tuned profile change failed. Expected 'Current active profile: $profile', got: [$output]"
       unless ($output =~ /Current active profile: $profile/);
 }
@@ -106,24 +111,10 @@ sub verify_sapconf_service {
     die "Command 'systemctl status $svc' output is not recognized" unless ($output =~ m|$active|s or $output =~ m|$success|s);
 }
 
-sub test_profile {
-    my $profile = shift;
-    assert_script_run "tuned-adm profile_info $profile" if is_sle('15+');
-    assert_script_run "tuned-adm profile $profile";
-    sleep 4;    # add a small sleep to ensure that tuned-adm has correctly switched profile
-    check_profile($profile);
-}
-
 sub run {
     my ($self) = @_;
-    my @tuned_profiles = qw(balanced desktop latency-performance network-latency network-throughput
-      powersave throughput-performance virtual-guest);
-    # Testing 'virtual-host' on a VM isn't very useful and can lead to sporadic timeout issues
-    push @tuned_profiles, 'virtual-host' unless (check_var('BACKEND', 'qemu'));
-    # Add SAP profiles depending of the products and the OS version
-    push @tuned_profiles, is_sle('15+') ? (check_var('SLE_PRODUCT', 'sles4sap') ? qw(sapconf saptune) : 'sapconf') : qw(sap-ase sap-bobj sap-hana sap-netweaver);
 
-    $self->select_serial_terminal;
+    select_console 'root-console';
 
     assert_script_run("rpm -q sapconf");
 
@@ -136,9 +127,9 @@ sub run {
     verify_sapconf_service('sapconf.service', 'sapconf') unless ($default_profile eq 'saptune');
     verify_sapconf_service('uuidd.socket',    'UUID daemon activation socket');
     verify_sapconf_service('sysstat.service', 'Write information about system start to sysstat log')
-      if is_sle('15+');
+      if (is_sle('>=15'));
 
-    my $statusregex = join('.+', sort(@tuned_profiles));
+    my $statusregex = join('.+', @tuned_profiles);
     $output = script_output "tuned-adm list";
     die "Command 'tuned-adm list' output is not recognized" unless ($output =~ m|$statusregex|s);
 
@@ -147,19 +138,15 @@ sub run {
     die "Command 'tuned-adm recommend' recommended profile is not in 'tuned-adm list'"
       unless (grep(/$output/, @tuned_profiles));
 
-    # Record a softfailure for x86_64 only, as the workarounded bug only happens on this arch
-    record_soft_failure 'bsc#1146298 - openQA test fails in sapconf due to timing issue'
-      if is_x86_64;
-
-    # We should test SAP profiles at the end - bsc#1146298
     foreach my $p (@tuned_profiles) {
-        test_profile($p);
+        assert_script_run "tuned-adm profile_info $p" if is_sle('>=15');
+        assert_script_run "tuned-adm profile $p";
+        check_profile($p);
     }
 
-    unless (is_sle('15+')) {
+    unless (is_sle('>=15')) {
         foreach my $cmd ('start', keys %sapconf_profiles) {
             $output = script_output "sapconf $cmd";
-            sleep 4;    # add a small sleep to ensure that tuned-adm has correctly switched profile
             die "Command 'sapconf $cmd' output is not recognized"
               unless ($output =~ /Forwarding action to tuned\-adm\./);
             next if ($cmd eq 'start');

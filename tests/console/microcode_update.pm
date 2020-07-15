@@ -19,17 +19,14 @@ use utils 'zypper_call';
 use Utils::Backends 'use_ssh_serial_console';
 
 sub run {
-    my ($self, $vendor, $match) = @_;
+    my ($self, $vendor) = @_;
     use_ssh_serial_console;
     # different true exit status value bash 0 perl 1
     if (script_run 'lscpu|grep -i intel') {
         $vendor = 'amd';
-        # on amd is no dmesg message which would prove or disprove microcode update
-        $match = 'microcode';
     }
     else {
         $vendor = 'intel';
-        $match  = 'microcode updated';
     }
     # different true exit status value bash 0 perl 1
     unless (script_run "zypper if ucode-$vendor|grep 'not installed'") {
@@ -39,9 +36,7 @@ sub run {
         $self->wait_boot;
         use_ssh_serial_console;
     }
-    # verify microcode is loaded in initramfs and check dmesg
-    assert_script_run "lsinitrd|grep microcode|grep -i $vendor";
-    assert_script_run "dmesg|grep '$match'";
+    assert_script_run 'dmesg|grep "microcode updated"';
 }
 
 1;

@@ -19,12 +19,11 @@ use warnings;
 use testapi;
 
 sub run {
-    my ($self, $ctx) = @_;
+    my ($self) = @_;
     my $config = '/etc/sysconfig/network/ifcfg-gre1';
     record_info('Info', 'Create a GRE interface from legacy ifcfg files');
-    $self->get_from_data('wicked/static_address/ifcfg-eth0', '/etc/sysconfig/network/ifcfg-' . $ctx->iface());
-    $self->get_from_data('wicked/ifcfg/gre1',                $config);
-    $self->setup_tunnel($config, 'gre1', $ctx->iface());
+    $self->get_from_data('wicked/ifcfg/gre1', $config);
+    $self->setup_tunnel($config, 'gre1');
     my $res = $self->get_test_result('gre1');
     die if ($res eq 'FAILED');
 }

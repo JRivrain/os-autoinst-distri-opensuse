@@ -14,7 +14,6 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 
 # Summary: Shut down the system
-# - Poweroff system
 # Maintainer: Oleksandr Orlov <oorlov@suse.de>
 
 use strict;

@@ -8,14 +8,6 @@
 # without any warranty.
 
 # Summary: Groupwise client check
-# - Stop packagekit service
-# - Add groupwise repository
-# - Import keys
-# - Install novell-groupwise-gwclient
-# - Remove groupwise repository
-# - Save screenshot
-# - Lauch groupwise
-# - Exit groupwise
 # Maintainer: Petr Cervinka <pcervinka@suse.com>
 
 use strict;

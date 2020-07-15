@@ -15,7 +15,6 @@ use base "installbasetest";
 use testapi;
 use strict;
 use warnings;
-use main_common 'opensuse_welcome_applicable';
 
 # using this as base class means only run when an install is needed
 sub run {
@@ -23,20 +22,23 @@ sub run {
 
     # live may take ages to boot
     my $timeout = 600;
+    assert_screen "generic-desktop", $timeout;
 
-    my @tags = qw(generic-desktop);
-    push(@tags, qw(opensuse-welcome)) if opensuse_welcome_applicable;
+    ## duplicated from second stage, combine!
+    if (check_var('DESKTOP', 'kde')) {
+        send_key "esc";
+        assert_screen "generic-desktop", 25;
+    }
+}
 
-    assert_screen \@tags, $timeout;
+sub test_flags {
+    return {fatal => 1};
 }
 
 sub post_fail_hook {
     my $self = shift;
 
     $self->export_logs();
-
-    # Also list branding packages (help to debug desktop branding issues)
-    $self->save_and_upload_log('zypper --no-refresh se *branding*', '/tmp/list_branding_packages.txt', {screenshot => 1});
 }
 
 1;

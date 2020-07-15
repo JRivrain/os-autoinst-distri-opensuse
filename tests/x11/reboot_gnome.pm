@@ -1,7 +1,7 @@
 # SUSE's openQA tests
 #
 # Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2019 SUSE LLC
+# Copyright © 2012-2017 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -9,8 +9,6 @@
 # without any warranty.
 
 # Summary: Reboot GNOME with or without authentication and ensure proper boot
-# - Call system reboot, keep console
-# - Wait until system fully boots (bootloader, login prompt)
 # Maintainer: Jozef Pupava <jpupava@suse.com>
 
 use base "opensusebasetest";
@@ -28,8 +26,7 @@ sub run {
     # In 88388900d2dfe267230972c6905b3cc18fb288cf the wait timeout was
     # bumped, due to tianocore being a bit slower, this brings this module
     # in sync
-    # 12/2019: Increasing from 400 to 600 since more seems to be required.
-    my $bootloader_timeout = (is_boot_encrypted || check_var('ARCH', 'aarch64')) ? 600 : 300;
+    my $bootloader_timeout = (is_boot_encrypted || check_var('ARCH', 'aarch64')) ? 400 : 300;
 
     $self->wait_boot(bootloader_time => $bootloader_timeout);
 }

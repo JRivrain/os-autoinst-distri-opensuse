@@ -27,6 +27,10 @@ sub reboot_and_wait_up {
         record_info('INFO', 'Reboot LPAR');
         #Reboot s390x lpar
         power_action('reboot', observe => 1, keepconsole => 1);
+        #Wait for s390x lpar bootup
+        sleep 120;
+        #Switch to s390x lpar console
+        reset_consoles;
         my $svirt = select_console('svirt', await_console => 0);
         return;
     }
@@ -41,7 +45,8 @@ sub reboot_and_wait_up {
         switch_from_ssh_to_sol_console(reset_console_flag => 'off');
         #login
         #The timeout can't be too small since autoyast installation
-        assert_screen "text-login", 600;
+        #need to wait 2nd phase install to finish
+        assert_screen("text-login", 600);
         type_string "root\n";
         assert_screen "password-prompt";
         type_password;

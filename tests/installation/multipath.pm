@@ -8,11 +8,10 @@
 # notice and this notice are preserved.  This file is offered as-is,
 # without any warranty.
 
-# Summary: Test module to activate multipath during initial installation
-# - If MULTIPATH_CONFIRM is set to YES, select yes at multipath detection screen
+# Summary: Test module to activate multipath
 # Maintainer: Rodion Iafarov <riafarov@suse.com>
 
-use base 'y2_installbase';
+use base "y2logsstep";
 use strict;
 use warnings;
 use testapi;
@@ -20,7 +19,7 @@ use testapi;
 sub run {
     # Sometimes multipath detection takes longer
     assert_screen "enable-multipath", 60;
-    send_key((get_var("MULTIPATH_CONFIRM") =~ /\bNO\b/i) ? "alt-n" : "alt-y");
+    send_key "alt-y";
 }
 
 1;

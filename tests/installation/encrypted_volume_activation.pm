@@ -18,23 +18,23 @@
 #    password for the existing volume to activate it.
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
-use base 'y2_installbase';
 use strict;
 use warnings;
+use base "y2logsstep";
 use testapi;
 use version_utils 'is_storage_ng';
 
 my $after_cancel_tags = [
     qw(
       enable-multipath scc-registration
-      inst-instmode addon-products
+      inst-instmode
       )];
 
 sub run {
     assert_screen 'encrypted_volume_activation_prompt';
     if (get_var('ENCRYPT_CANCEL_EXISTING')) {
         wait_screen_change { send_key 'alt-c'; };
-        assert_screen($after_cancel_tags, 60);
+        assert_screen($after_cancel_tags);
     }
     elsif (get_var('ENCRYPT_ACTIVATE_EXISTING')) {
         # pre storage NG has an additional question dialog

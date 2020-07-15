@@ -17,11 +17,6 @@ use testapi;
 use lockapi;
 use mmapi;
 
-# This tells the module whether the test is running in a supportserver or in node1
-sub is_not_supportserver_scenario {
-    return (get_var('HOSTNAME') =~ /node01$/ and !get_var('USE_SUPPORT_SERVER'));
-}
-
 sub run {
     my $cluster_infos = get_required_var('CLUSTER_INFOS');
 
@@ -32,22 +27,8 @@ sub run {
         # Number of node is a mandatory variable!
         die 'A valid number of nodes is mandatory' if ($num_nodes lt '2');
 
-        # Create mutex for HA clusters
-        mutex_create 'csync2';
-        mutex_create 'cluster_restart';
-
         # BARRIER_HA_ needs to also wait the support-server
-        if (is_not_supportserver_scenario) {
-            mutex_create 'iscsi';
-            barrier_create("BARRIER_HA_$cluster_name",                       $num_nodes);
-            barrier_create("BARRIER_HA_NFS_SUPPORT_DIR_SETUP_$cluster_name", $num_nodes);
-            barrier_create("BARRIER_HA_HOSTS_FILES_READY_$cluster_name",     $num_nodes);
-            barrier_create("BARRIER_HA_LUNS_FILES_READY_$cluster_name",      $num_nodes);
-            barrier_create("BARRIER_HA_NONSS_FILES_SYNCED_$cluster_name",    $num_nodes);
-        }
-        else {
-            barrier_create("BARRIER_HA_$cluster_name", $num_nodes + 1);
-        }
+        barrier_create("BARRIER_HA_$cluster_name", $num_nodes + 1);
 
         # Create barriers for HA clusters
         barrier_create("CLUSTER_INITIALIZED_$cluster_name",         $num_nodes);
@@ -93,34 +74,10 @@ sub run {
         barrier_create("JOIN_NODE_BY_HOST_DONE_$cluster_name",      $num_nodes);
         barrier_create("JOIN_NODE_BY_IP_DONE_$cluster_name",        $num_nodes);
         barrier_create("REMOVE_NODE_FINAL_JOIN_$cluster_name",      $num_nodes);
-        barrier_create("RSC_REMOVE_INIT_$cluster_name",             $num_nodes);
-        barrier_create("RSC_REMOVE_DONE_$cluster_name",             $num_nodes);
-        barrier_create("CSYNC2_CONFIGURED_$cluster_name",           $num_nodes);
-        barrier_create("CSYNC2_SYNC_$cluster_name",                 $num_nodes);
-        barrier_create("SBD_DONE_$cluster_name",                    $num_nodes);
-        barrier_create("SSH_KEY_CONFIGURED_$cluster_name",          $num_nodes);
-        barrier_create("CLVM_TO_LVMLOCKD_START_$cluster_name",      $num_nodes);
-        barrier_create("CLVM_TO_LVMLOCKD_DONE_$cluster_name",       $num_nodes);
-
-        # PACEMAKER_TEST_ barriers also have to wait in the client
-        barrier_create("PACEMAKER_CTS_INIT_$cluster_name",    $num_nodes + 1);
-        barrier_create("PACEMAKER_CTS_CHECKED_$cluster_name", $num_nodes + 1);
 
         # HAWK_GUI_ barriers also have to wait in the client
         barrier_create("HAWK_GUI_INIT_$cluster_name",    $num_nodes + 1);
         barrier_create("HAWK_GUI_CHECKED_$cluster_name", $num_nodes + 1);
-        barrier_create("HAWK_FENCE_$cluster_name",       $num_nodes + 1);
-
-        # CTDB barriers
-        barrier_create("CTDB_INIT_$cluster_name", $num_nodes + 1);
-        barrier_create("CTDB_DONE_$cluster_name", $num_nodes + 1);
-
-        # QNETD barriers
-        barrier_create("QNETD_SERVER_READY_$cluster_name",     $num_nodes + 1);
-        barrier_create("QNETD_SERVER_DONE_$cluster_name",      $num_nodes + 1);
-        barrier_create("QNETD_TESTS_DONE_$cluster_name",       $num_nodes + 1);
-        barrier_create("SPLIT_BRAIN_TEST_READY_$cluster_name", $num_nodes + 1);
-        barrier_create("SPLIT_BRAIN_TEST_DONE_$cluster_name",  $num_nodes + 1);
 
         # Create barriers for multiple tests
         foreach my $fs_tag ('LUN', 'CLUSTER_MD', 'DRBD_PASSIVE', 'DRBD_ACTIVE') {
@@ -140,33 +97,24 @@ sub run {
         # Create barriers for SAP cluster
         # Note: we always create these barries even if they are not used, mainly
         # because it's not easy to know at this stage that we are testing a SAP cluster...
-        barrier_create("ASCS_INSTALLED_$cluster_name",       $num_nodes);
-        barrier_create("ERS_INSTALLED_$cluster_name",        $num_nodes);
-        barrier_create("NW_CLUSTER_HOSTS_$cluster_name",     $num_nodes);
-        barrier_create("NW_CLUSTER_INSTALL_$cluster_name",   $num_nodes);
-        barrier_create("NW_INIT_CONF_$cluster_name",         $num_nodes);
-        barrier_create("NW_CREATED_CONF_$cluster_name",      $num_nodes);
-        barrier_create("NW_LOADED_CONF_$cluster_name",       $num_nodes);
-        barrier_create("NW_RA_RESTART_$cluster_name",        $num_nodes);
-        barrier_create("HANA_CLUSTER_INSTALL_$cluster_name", $num_nodes);
-        barrier_create("HANA_INIT_CONF_$cluster_name",       $num_nodes);
-        barrier_create("HANA_CREATED_CONF_$cluster_name",    $num_nodes);
-        barrier_create("HANA_LOADED_CONF_$cluster_name",     $num_nodes);
-        barrier_create("HANA_RA_RESTART_$cluster_name",      $num_nodes);
+        barrier_create("ASCS_INSTALLED_$cluster_name",     $num_nodes);
+        barrier_create("ERS_INSTALLED_$cluster_name",      $num_nodes);
+        barrier_create("NW_CLUSTER_HOSTS_$cluster_name",   $num_nodes);
+        barrier_create("NW_CLUSTER_INSTALL_$cluster_name", $num_nodes);
+        barrier_create("NW_INIT_CONF_$cluster_name",       $num_nodes);
+        barrier_create("NW_CREATED_CONF_$cluster_name",    $num_nodes);
+        barrier_create("NW_LOADED_CONF_$cluster_name",     $num_nodes);
     }
 
     # Wait for all children to start
     # Children are server/test suites that use the PARALLEL_WITH variable
     wait_for_children_to_start;
 
-    # Finish early if running in node 1 instead of supportserver
-    return if is_not_supportserver_scenario;
-
     # For getting informations from iSCSI server
     my $target_iqn     = script_output 'lio_node --listtargetnames 2>/dev/null';
     my $target_ip_port = script_output "ls /sys/kernel/config/target/iscsi/${target_iqn}/tpgt_1/np 2>/dev/null";
     my $dev_by_path    = '/dev/disk/by-path';
-    my $index          = get_var('ISCSI_LUN_INDEX', 0);
+    my $index          = 0;
 
     for my $cluster_info (split(/,/, $cluster_infos)) {
         # The CLUSTER_INFOS variable for support_server also contains the number of LUN

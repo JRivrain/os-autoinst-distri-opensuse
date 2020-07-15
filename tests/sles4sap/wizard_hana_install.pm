@@ -15,113 +15,157 @@ use base 'sles4sap';
 use strict;
 use warnings;
 use testapi;
-use utils qw(file_content_replace type_string_slow);
+use utils;
+use Utils::Backends 'use_ssh_serial_console';
+use version_utils 'is_sle';
 use x11utils 'turn_off_gnome_screensaver';
+
+sub get_total_mem {
+    return get_required_var('QEMURAM') if (check_var('BACKEND', 'qemu'));
+    my $mem = script_output q@grep ^MemTotal /proc/meminfo | awk '{print $2}'@;
+    $mem /= 1024;
+    return $mem;
+}
+
+sub try_reclaiming_space {
+    my $output = script_output q@parted /dev/sda print free | awk '/Free Space/ {print $3}' | tail -1@;
+    $output =~ m/([0-9\.]+)([A-Z])B/i;
+    my $free  = $1;
+    my $units = uc($2);
+    if ($units eq 'T') {
+        $free *= 1024;
+    }
+    elsif ($units ne 'G') {
+        # Assume there's no space available if units are not T or G
+        $free = 0;
+    }
+    # Only attempt to reclaim space from /dev/system/root if there's not enough free space available
+    return if ($free >= 70);
+
+    $output = script_output 'df -h --output=size,used,avail / | tail -1';
+    my ($root_size, $root_used, $root_free) = split(/\s+/, $output);
+    $root_size =~ s/([A-Z])$//i;
+    $root_free =~ s/([A-Z])$//i;
+    $units = $1;
+    if ($units eq 'T') {
+        $root_free *= 1024;
+    }
+    elsif ($units ne 'G') {
+        # Asume there's not enough free space on /dev/system/root if units are not T or G
+        $root_free = 0;
+    }
+    # Always leave at least 25Gb free on /dev/system/root for packages and Hana
+    $root_free -= 25;
+    $root_size -= $root_free if ($root_free > 0);
+    if ($root_size >= ($root_used + 25)) {
+        assert_script_run "btrfs filesystem resize $root_size$units /";
+        assert_script_run "lvreduce --yes --force --size $root_size$units /dev/system/root";
+    }
+    $output = script_output q@pvscan | sed -n '/system/s/\[//p' | awk '(NSIZE=$6-$9+1) {print $2","NSIZE","$10}'@;
+    my ($device, $newsize, $unit) = split(/,/, $output);
+    $unit = substr($unit, 0, 1);
+    # Do nothing else unless there's at least 1GB to reclaim in the LVM partition
+    return unless ($unit eq 'G' or $unit eq 'T');
+    assert_script_run "pvresize -y --setphysicalvolumesize $newsize$unit $device";
+    $device =~ s/([0-9]+)$//;
+    my $partnum = $1;
+    $newsize += 5;    # Just to be sure that the partition is bigger than the PV
+    assert_script_run "parted -s $device resizepart $partnum $newsize$unit";
+    type_string "partprobe;sync;sync;\n";
+}
 
 sub run {
     my ($self) = @_;
-    my ($proto, $path) = $self->fix_path(get_required_var('HANA'));
-    my $timeout = bmwqemu::scale_timeout(3600);
-    my $sid     = get_required_var('INSTANCE_SID');
-    my $instid  = get_required_var('INSTANCE_ID');
+    my ($proto, $path) = split m|://|, get_required_var('MEDIA');
+    die "Currently supported protocols are nfs and smb" unless $proto =~ /^(nfs|smb)$/;
 
-    $self->select_serial_terminal;
+    my $sid      = get_required_var('INSTANCE_SID');
+    my $password = 'Qwerty_123';
+    set_var('PASSWORD', $password);
 
-    # Check that there is enough RAM for HANA
-    my $RAM = $self->get_total_mem();
+    check_var('BACKEND', 'ipmi') ? use_ssh_serial_console : select_console 'root-console';
+    my $RAM = get_total_mem();
     die "RAM=$RAM. The SUT needs at least 24G of RAM" if $RAM < 24000;
 
-    # Keep only the generic HANA partitioning profile and link it to the needed model
-    # NOTE: fix name is used here (Dell), but something more flexible should be done later!
-    type_string "rm -f /usr/share/YaST2/include/sap-installation-wizard/hana_partitioning_Dell*.xml\n";
-    type_string "ln -s hana_partitioning.xml '/usr/share/YaST2/include/sap-installation-wizard/hana_partitioning_Dell Inc._generic.xml'\n";
+    # If on IPMI, let's try to reclaim some of the space from the system PV which may be needed for Hana
+    try_reclaiming_space if (check_var('BACKEND', 'ipmi'));
 
     # Add host's IP to /etc/hosts
-    $self->add_hostname_to_hosts;
+    my $netdevice = get_var('SUT_NETDEVICE', 'eth0');
+    assert_script_run "echo \$(ip -4 addr show dev $netdevice | sed -rne '/inet/s/[[:blank:]]*inet ([0-9\\.]*).*/\\1/p') \$(hostname) >> /etc/hosts";
+    if (is_sle('>=15')) {
+        my $arch       = get_required_var('ARCH');
+        my $os_version = script_output('sed -rn "s/^VERSION_ID=\"(.*)\"/\1/p" /etc/os-release');
 
-    # Install libopenssl1_0_0 for older (<SPS03) HANA versions on SLE15+
-    $self->install_libopenssl_legacy($path);
+        # Disable packagekit, needed to not lock RPM database for zypper call
+        pkcon_quit;
 
-    if (check_var('DESKTOP', 'textmode')) {
-        script_run "yast2 sap-installation-wizard; echo yast2-sap-installation-wizard-status-\$? > /dev/$serialdev", 0;
-        assert_screen 'sap-installation-wizard';
-    } else {
-        select_console 'x11';
-        mouse_hide;    # Hide the mouse so no needle will fail because of the mouse pointer appearing
-        x11_start_program('xterm');
-        turn_off_gnome_screensaver;    # Disable screensaver
-        type_string "killall xterm\n";
-        assert_screen 'generic-desktop';
-        x11_start_program('yast2 sap-installation-wizard', target_match => 'sap-installation-wizard');
+        assert_script_run "SUSEConnect -p sle-module-legacy/$os_version/$arch";
+        zypper_call('in libopenssl1_0_0');
     }
+    select_console 'x11';
+    # Hide the mouse so no needle will fail because of the mouse pointer appearing
+    mouse_hide;
 
-    # The following commands are identical in text or graphical mode
+    x11_start_program('xterm');
+    turn_off_gnome_screensaver;
+    type_string "killall xterm\n";
+    assert_screen 'generic-desktop';
+    x11_start_program('yast2 sap-installation-wizard', target_match => 'sap-installation-wizard');
     send_key 'tab';
     send_key_until_needlematch 'sap-wizard-proto-' . $proto . '-selected', 'down';
-    send_key 'ret' if check_var('DESKTOP', 'textmode');
     send_key 'alt-p';
-    send_key_until_needlematch 'sap-wizard-inst-master-empty', 'backspace', 30 if check_var('DESKTOP', 'textmode');
     type_string_slow "$path", wait_still_screen => 1;
-    save_screenshot;
+    send_key 'tab';
     send_key $cmd{next};
     assert_screen 'sap-wizard-copying-media',     120;
-    assert_screen 'sap-wizard-supplement-medium', $timeout;    # We need to wait for the files to be copied
+    assert_screen 'sap-wizard-supplement-medium', 4000;
     send_key $cmd{next};
     assert_screen 'sap-wizard-additional-repos';
     send_key $cmd{next};
     assert_screen 'sap-wizard-hana-system-parameters';
-    send_key 'alt-s';                                          # SAP SID
-    send_key_until_needlematch 'sap-wizard-sid-empty', 'backspace' if check_var('DESKTOP', 'textmode');
+    # SAP SID / Password
+    send_key 'alt-s';
     type_string $sid;
-    wait_screen_change { send_key 'alt-a' };                   # SAP Password
-    type_password $sles4sap::instance_password;
+    wait_screen_change { send_key 'alt-a' };
+    type_password $password;
     wait_screen_change { send_key 'tab' };
-    type_password $sles4sap::instance_password;
+    type_password $password;
     wait_screen_change { send_key $cmd{ok} };
-    assert_screen 'sap-wizard-profile-ready', 300;
+    assert_screen 'sap-wizard-performing-installation', 60;
+    assert_screen 'sap-wizard-profile-ready',           300;
     send_key $cmd{next};
-
-    while (1) {
-        assert_screen [qw(sap-wizard-disk-selection-warning sap-wizard-disk-selection sap-wizard-partition-issues sap-wizard-continue-installation sap-product-installation)], no_wait => 1;
-        last                if match_has_tag 'sap-product-installation';
-        send_key $cmd{next} if match_has_tag 'sap-wizard-disk-selection-warning';    # A warning can be shown
-        if (match_has_tag 'sap-wizard-disk-selection') {
-            assert_and_click 'sap-wizard-disk-selection';                            # Install in sda
-            send_key 'alt-o';
-        }
-        send_key 'alt-o' if match_has_tag 'sap-wizard-partition-issues';
-        send_key 'alt-y' if match_has_tag 'sap-wizard-continue-installation';
-        wait_still_screen 1;                                                         # Slow down the loop
+    if (check_screen('sap-wizard-disk-selection', 60)) {
+        # Install in sda
+        assert_and_click 'sap-wizard-disk-selection';
+        send_key 'alt-o';
     }
-
-    if (check_var('DESKTOP', 'textmode')) {
-        wait_serial('yast2-sap-installation-wizard-status-0', $timeout) || die "'yast2 sap-installation-wizard' didn't finish";
+    send_key 'alt-o' if (check_screen 'sap-wizard-partition-issues',      60);
+    send_key 'alt-y' if (check_screen 'sap-wizard-continue-installation', 30);
+    assert_screen 'sap-product-installation';
+    assert_screen [qw(sap-wizard-installation-summary sap-wizard-finished sap-wizard-failed sap-wizard-error)], 4000;
+    send_key $cmd{ok};
+    if (match_has_tag 'sap-wizard-installation-summary') {
+        assert_screen 'generic-desktop', 600;
     } else {
-        assert_screen [qw(sap-wizard-installation-summary sap-wizard-finished sap-wizard-failed sap-wizard-error)], $timeout;
-        send_key $cmd{ok};
-        if (match_has_tag 'sap-wizard-installation-summary') {
-            assert_screen 'generic-desktop', 600;
-        } else {
-            # Wait for SAP wizard to finish writing logs
-            check_screen 'generic-desktop', 90;
-            die "Failed";
-        }
+        # Wait for SAP wizard to finish writing logs
+        check_screen 'generic-desktop', 90;
+        die "Failed";
     }
-
-    # Enable autostart of HANA HDB, otherwise DB will be down after the next reboot
-    # NOTE: not on HanaSR, as DB is managed by the cluster stack
-    unless (get_var('HA_CLUSTER')) {
-        select_console 'root-console' unless check_var('DESKTOP', 'textmode');
-        my $hostname = script_output 'hostname';
-        file_content_replace("/hana/shared/${sid}/profile/${sid}_HDB${instid}_${hostname}", '^Autostart[[:blank:]]*=.*' => 'Autostart = 1');
-    }
-
-    # Upload installations logs
-    $self->upload_hana_install_log;
 }
 
 sub test_flags {
     return {fatal => 1};
+}
+
+sub post_fail_hook {
+    my ($self) = @_;
+    check_var('BACKEND', 'ipmi') ? use_ssh_serial_console : select_console 'root-console';
+    assert_script_run 'tar cf /tmp/logs.tar /var/adm/autoinstall/logs /var/tmp/hdb*; xz -9v /tmp/logs.tar';
+    upload_logs '/tmp/logs.tar.xz';
+    assert_script_run "save_y2logs /tmp/y2logs.tar.xz";
+    upload_logs "/tmp/y2logs.tar.xz";
+    $self->SUPER::post_fail_hook;
 }
 
 1;

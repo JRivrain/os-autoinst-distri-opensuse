@@ -31,13 +31,18 @@ sub get_script_run {
 
 sub generateXML {
     my ($self, $data) = @_;
+
     print Dumper($data);
-    my %my_hash         = %$data;
-    my $pass_nums       = 0;
-    my $fail_nums       = 0;
-    my $skip_nums       = 0;
-    my $test_time_hours = 0;
-    my $test_time_mins  = 0;
+    my %my_hash = %$data;
+
+    my $case_num = scalar(keys %my_hash);
+    my $case_status;
+    my $xml_result;
+    my $pass_nums = 0;
+    my $fail_nums = 0;
+    my $skip_nums = 0;
+    my $writer    = XML::Writer->new(DATA_MODE => 'true', DATA_INDENT => 2, OUTPUT => 'self');
+
     foreach my $item (keys(%my_hash)) {
         if ($my_hash{$item}->{status} =~ m/PASSED/) {
             $pass_nums += 1;
@@ -49,40 +54,68 @@ sub generateXML {
         else {
             $fail_nums += 1;
         }
-        my $test_time = eval { $my_hash{$item}->{test_time} ? $my_hash{$item}->{test_time} : '' };
-        if ($test_time ne '') {
-            my ($time_hours) = $test_time =~ /^(\d+)m.*s$/i;
-            my ($time_mins)  = $test_time =~ /^.*m(\d+)s$/i;
-            $test_time_hours += $time_hours;
-            $test_time_mins  += $time_mins;
-        }
     }
-    $self->{pass_nums} = $pass_nums;
-    $self->{fail_nums} = $fail_nums;
-    $self->{skip_nums} = $skip_nums;
-    $self->{test_time} = $test_time_hours . 'm' . $test_time_mins . 's';
 
     diag '@{$self->{success_guest_list}} content is: ' . Dumper(@{$self->{success_guest_list}});
-    ###Load instance attributes into %xmldata
-    my %xmldata;
-    foreach (keys %{$self}) {
-        if (defined($self->{$_})) {
-            if (ref($self->{$_}) eq 'HASH') {
-                %{$xmldata{$_}} = %{$self->{$_}};
-            }
-            elsif (ref($self->{$_}) eq 'ARRAY') {
-                @{$xmldata{$_}} = @{$self->{$_}};
-            }
-            else {
-                $xmldata{$_} = $self->{$_};
-            }
+
+    my $count = $pass_nums + $fail_nums + $skip_nums;
+    $writer->startTag(
+        'testsuites',
+        error    => "0",
+        failures => "$fail_nums",
+        name     => $self->{product_name},
+        skipped  => "0",
+        tests    => "$count",
+        time     => ""
+    );
+    $writer->startTag(
+        'testsuite',
+        error     => "0",
+        failures  => "$fail_nums",
+        hostname  => "`hostname`",
+        id        => "0",
+        name      => $self->{product_tested_on},
+        package   => $self->{package_name},
+        skipped   => "0",
+        tests     => $case_num,
+        time      => "",
+        timestamp => "2016-02-16T02:50:00"
+    );
+
+    foreach my $item (keys(%my_hash)) {
+        if ($my_hash{$item}->{status} =~ m/PASSED/) {
+            $case_status = "success";
+        }
+        elsif ($my_hash{$item}->{status} =~ m/SKIPPED/ && $item =~ m/iso/) {
+            $case_status = "skipped";
         }
         else {
-            next;
+            $case_status = "failure";
         }
+
+        $writer->startTag(
+            'testcase',
+            classname => $item,
+            name      => $item,
+            status    => $case_status,
+            time      => $my_hash{$item}->{time});
+        $writer->startTag('system-err');
+        my $system_err = ($my_hash{$item}->{error} ? $my_hash{$item}->{error} : 'None');
+        $writer->characters("$system_err");
+        $writer->endTag('system-err');
+
+        $writer->startTag('system-out');
+        $writer->characters($my_hash{$item}->{time});
+        $writer->endTag('system-out');
+
+        $writer->endTag('testcase');
     }
-    print "The data to be used for xml generation:", Dumper(\%xmldata);
-    generateXML_from_data($data, \%xmldata);
+
+    $writer->endTag('testsuite');
+    $writer->endTag('testsuites');
+
+    $writer->end();
+    $writer->to_string();
 }
 
 sub execute_script_run {
