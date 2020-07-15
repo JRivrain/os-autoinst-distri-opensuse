@@ -9,6 +9,11 @@
 # without any warranty.
 
 # Summary: Case#1479221: Firefox: HTML5 Video
+# - Launch xterm, kill firefox, cleanup previous firefox configuration, launch
+# firefox
+# - Open "youtube.com/html5" and check result
+# - Open "youtube.com/watch?v=Z4j5rJQMdOU" and check result
+# - Exit firefox
 # Maintainer: wnereiz <wnereiz@gmail.com>
 
 use strict;
@@ -19,19 +24,9 @@ use testapi;
 sub run {
     my ($self) = @_;
     $self->start_firefox_with_profile;
-
-    $self->firefox_open_url('youtube.com/html5');
-    assert_screen('firefox-html5-youtube');
-    send_key "pgdn";
-    send_key "up";
-    send_key "up";
-    sleep 1;
-    assert_screen('firefox-html5-support', 60);
-
     $self->firefox_open_url('youtube.com/watch?v=Z4j5rJQMdOU');
-    assert_screen('firefox-flashplayer-video_loaded');
-
-    # Exit
+    assert_and_click('firefox-flashplayer-video_loaded');
+    assert_screen("firefox-testvideo");
     $self->exit_firefox;
 }
 1;

@@ -1,15 +1,16 @@
 # SUSE's openQA tests
 #
 # Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2017 SUSE LLC
+# Copyright © 2012-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
 # notice and this notice are preserved.  This file is offered as-is,
 # without any warranty.
 
-# Summary: Clean for testing tracker
-# Maintainer: Chingkai <qkzhu@suse.com>
+# Summary: Cleanup before testing tracker
+# - remove two files (newfile and newpl.pl)
+# Maintainer: Zhaocong Jia <zcjia@suse.com> Grace Wang <grace.wang@suse.com>
 
 use base "x11test";
 use strict;

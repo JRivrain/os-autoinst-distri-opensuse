@@ -1,6 +1,6 @@
 # LibreOffice tests
 #
-# Copyright © 2016-2017 SUSE LLC
+# Copyright © 2016-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -8,7 +8,46 @@
 # without any warranty.
 
 # Summary: Case 1503827 - LibreOffice: Launch application components from system menu
-# Maintainer: Chingkai <qkzhu@suse.com>
+# - Open menu button -> office menu
+#   - Launch libreoffice and check
+#   - Quit libreoffice
+# - Open menu button -> office menu
+#   - Launch office base and check
+#   - Save a database named "testdatabase"
+#   - Cleanup created database
+#   - Quit libreoffice
+# - Open menu button -> office menu
+#   - Launch office calc and check
+#   - Quit libreoffice
+# - Open menu button -> office menu
+#   - Launch office draw and check
+#   - Quit libreoffice
+# - Open menu button -> office menu
+#   - Launch office impress and check
+#   - Quit libreoffice
+# - Open menu button -> office menu
+#   - Launch office writer and check
+#   - Quit libreoffice
+# - Install libreoffice-base if necessary
+# - Open gnome activities overview
+#   - Type "base", send <ENTER> and check
+#   - Save a database named "testdatabase"
+#   - Cleanup created database
+# - Open gnome activities overview
+#   - Type "calc", send <ENTER> and check
+#   - Uncheck "show tips on startup"
+#   - Quit libreoffice
+# - Open gnome activities overview
+#   - Type "draw", send <ENTER> and check
+#   - Quit libreoffice
+# - Open gnome activities overview
+#   - Type "impress", send <ENTER> and check
+#   - Quit libreoffice
+# - Open gnome activities overview
+#   - Type "writer", send <ENTER> and check
+#   - Click on writing area
+#   - Quit libreoffice
+# Maintainer: Zhaocong Jia <zcjia@suse.com>
 
 use base "x11test";
 use strict;
@@ -37,9 +76,15 @@ sub open_overview {
 
 sub select_base_and_cleanup {
     assert_screen 'oobase-select-database', 45;
+    if (check_screen 'oobase-database-empty') {
+        # this is for libreoffice 6.2.x
+        send_key "tab";
+        send_key "tab";
+        send_key "up";
+    }
     send_key "ret";
     assert_screen 'oobase-save-database';
-    send_key "ret";
+    send_key "alt-f";    # "Finish" button
     assert_screen 'oobase-save-database-prompt';
     type_string "testdatabase";
     send_key "ret";
@@ -107,8 +152,8 @@ sub run {
         x11_start_program('xterm');
         script_run("gsettings set org.gnome.desktop.session idle-delay 0", 0);    #value=0 means never blank screen
         become_root;
-        script_run("zypper in -y libreoffice-base",                          900);
-        script_run("gsettings set org.gnome.desktop.session idle-delay 900", 0);     #default value=900
+        zypper_call("in libreoffice-base", timeout => 900);
+        script_run("gsettings set org.gnome.desktop.session idle-delay 900", 0);    #default value=900
         send_key 'alt-f4';
         $self->open_overview();
         type_string "base";
@@ -118,20 +163,34 @@ sub run {
     select_base_and_cleanup;
 
     $self->open_overview();
-    type_string "calc";                                                              #open calc
+    type_string "calc";                                                             #open calc
     assert_and_click 'overview-office-calc';
-    assert_screen 'test-oocalc-1';
-    send_key "ctrl-q";                                                               #close calc
+    assert_screen 'test-oocalc-1', 60;
+    if (!match_has_tag('ooffice-tip-of-the-day')) {
+        # Sometimes the dialog does not appear immediately but after a short delay,
+        # or is fading in slowly - poo#56510
+        wait_still_screen 2;
+        assert_screen 'test-oocalc-1';
+    }
+    if (match_has_tag('ooffice-tip-of-the-day')) {
+        # Unselect "_S_how tips on startup", select "_O_k"
+        send_key "alt-s";
+        send_key "alt-o";
+        while (match_has_tag('ooffice-tip-of-the-day')) {
+            assert_screen 'test-oocalc-1';
+        }
+    }
+    send_key "ctrl-q";    #close calc
 
     $self->open_overview();
-    type_string "draw";                                                              #open draw
+    type_string "draw";    #open draw
     assert_screen 'overview-office-draw';
     send_key "ret";
     assert_screen 'oodraw-launched';
-    send_key "ctrl-q";                                                               #close draw
+    send_key "ctrl-q";     #close draw
 
     $self->open_overview();
-    type_string "impress";                                                           #open impress
+    type_string "impress";    #open impress
     assert_screen 'overview-office-impress';
     send_key "ret";
     assert_screen [qw(ooimpress-select-a-template ooimpress-select-template-nofocus ooimpress-launched)];
@@ -141,18 +200,18 @@ sub run {
         assert_screen 'ooimpress-launched';
     }
     elsif (match_has_tag 'ooimpress-select-a-template') {
-        send_key 'alt-f4';                                                           # close impress template window
+        send_key 'alt-f4';    # close impress template window
         assert_screen 'ooimpress-launched';
     }
-    send_key "ctrl-q";                                                               #close impress
+    send_key "ctrl-q";        #close impress
 
     $self->open_overview();
-    type_string "writer";                                                            #open writer
+    type_string "writer";     #open writer
     assert_screen 'overview-office-writer';
     send_key "ret";
     assert_screen 'test-ooffice-1';
-    assert_and_click 'ooffice-writing-area', 'left', 10;
-    send_key "ctrl-q";                                                               #close writer
+    assert_and_click('ooffice-writing-area', timeout => 10);
+    send_key "ctrl-q";        #close writer
 }
 
 1;

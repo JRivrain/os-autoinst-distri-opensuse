@@ -11,9 +11,9 @@
 # Maintainer: mgriessmeier <mgriessmeier@suse.com>, Nick Singer <nsinger@suse.de>
 # Tags: fate#323273, poo#26786
 
+use base 'y2_installbase';
 use strict;
 use warnings;
-use base "y2logsstep";
 use testapi;
 use version_utils ':VERSION';
 
@@ -25,11 +25,7 @@ sub run {
     type_string "grep -o \"Got release notes.*\" /var/log/YaST2/y2log\n";
     assert_screen [qw(got-releasenotes-RPM got-releasenotes-URL)];
     unless (match_has_tag "got-releasenotes-$src") {
-        if (is_sle '=15-SP1') {
-            record_soft_failure 'bsc#1106066';
-        } else {
-            die "Release notes source does NOT match expectaions or not found in YaST logs, expected source: $src";
-        }
+        die "Release notes source does NOT match expectaions or not found in YaST logs, expected source: $src";
     }
     type_string "exit\n";
     # If we don't have system role screen, release notes origin is verified on partitioning screen

@@ -14,7 +14,7 @@
 #    while launching atm.
 # Maintainer: Zaoliang Luo <zluo@suse.de>
 
-use base 'y2x11test';
+use base 'y2_module_guitest';
 use strict;
 use warnings;
 use testapi;
@@ -40,9 +40,6 @@ sub search {
         send_key 'backspace';
     }
     wait_screen_change { type_string $name; } if $name;
-    # After typing some icons get detected before it's filetered
-    # Adding extra sync point before trying to click
-    wait_still_screen 3;
 }
 
 sub start_addon_products {
@@ -75,7 +72,17 @@ sub start_online_update {
         select_console 'root-console';
         my $version     = lc get_required_var('VERSION');
         my $update_name = is_tumbleweed() ? $version : 'leap/' . $version . '/oss';
-        zypper_call("ar -f http://download.opensuse.org/update/$update_name repo-update");
+        my $repo_arch   = get_required_var('ARCH');
+        $repo_arch = 'ppc' if ($repo_arch =~ /ppc64|ppc64le/);
+        if ($repo_arch =~ /i586|i686|x86_64/) {
+            zypper_call("ar -f http://download.opensuse.org/update/$update_name repo-update");
+        } else {
+            if (is_tumbleweed()) {
+                zypper_call("ar -f http://download.opensuse.org/ports/$repo_arch/update/tumbleweed repo-update");
+            } else {
+                zypper_call("ar -f http://download.opensuse.org/ports/update/$update_name repo-update");
+            }
+        }
         select_console 'x11', await_console => 0;
     }
     assert_and_click 'yast2_control-center_online-update';
@@ -193,10 +200,7 @@ sub start_partitioner {
     }
     assert_screen 'yast2_control-center-partitioner_expert', timeout => 60;
     send_key 'alt-f';
-    if (is_storage_ng) {
-        assert_screen 'expert-partitioner-modify-confirmation';
-        wait_screen_change { send_key 'alt-o' };    #Continue
-    }
+
     assert_screen 'yast2-control-center-ui', timeout => 60;
 }
 
@@ -358,7 +362,7 @@ sub run {
     }
     # only available on openSUSE or at least not SLES
     # drop fonts test for leap 15.0, see poo#29292
-    if (is_tumbleweed || is_leap('<15.0')) {
+    if (is_leap('<15.0')) {
         start_fonts;
     }
 

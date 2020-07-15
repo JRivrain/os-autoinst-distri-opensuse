@@ -1,16 +1,22 @@
 # SUSE's openQA tests
 #
-# Copyright © 2017-2019 SUSE LLC
+# Copyright © 2017-2020 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
 # notice and this notice are preserved.  This file is offered as-is,
 # without any warranty.
-
-# Summary: Simple clamav test for SLE FIPS and openSUSE
-# Author: Wei Jiang <wjiang@suse.com>
-# Maintainer: wnereiz <wnereiz@member.fsf.org>
-# Tags: TC1595169, poo#46880
+#
+# Summary: check freshclam and clamscan against some fake virus samples
+# - refresh the database using freshclam
+# - change user vscan to root in clamd.conf (clamd runs as root)
+# - start clamd and freshclam using systemctl
+# - check that clamscan is able to recognize a fake vim virus
+# - check that clamscan is able to recognize an EICAR virus pdf, txt and zip format
+# - check that clamdscan is able to recognize an EICAR virus pdf, txt and zip format
+#
+# Maintainer: Ben Chou <bchou@suse.com>
+# Tags: TC1595169, poo#46880, poo#65375
 
 use base "consoletest";
 use strict;
@@ -19,9 +25,21 @@ use testapi;
 use utils;
 use version_utils qw(is_jeos is_opensuse);
 
+sub scan_and_parse {
+    my $re       = 'm/(eicar_test_files\/eicar.(pdf|txt|zip): Eicar-Test-Signature FOUND\n)+(\n.*)+Infected files: 3(\n.*)+/';
+    my $cmd      = shift;
+    my $log_file = "$cmd.log";
+
+    script_run "$cmd -i --log=$log_file eicar_test_files", 300;
+    validate_script_output("cat $log_file", sub { $re });
+    script_run "rm -f $log_file";
+}
+
 sub run {
-    select_console 'root-console';
-    zypper_call('in clamav');
+    my $self = shift;
+    $self->select_serial_terminal;
+
+    zypper_call('in clamav vim');
     # Initialize and download ClamAV database which needs time
     assert_script_run('freshclam', 700);
 
@@ -49,6 +67,7 @@ sub run {
     systemctl('daemon-reload');
 
     # Start the deamons
+    script_run("sed -i 's/User vscan/User root/g' /etc/clamd.conf");
     systemctl('start clamd', timeout => 400);
     systemctl('start freshclam');
 
@@ -61,12 +80,28 @@ sub run {
         die "Virus scan result was not expected" unless (wait_serial qr/vim\.UNOFFICIAL FOUND.*Known viruses: 1/ms);
     }
 
+    # test 3 different file formats containing the EICAR signature
+    assert_script_run "mkdir eicar_test_files";
+    my $rel_path;
+    for my $ext (qw(pdf txt zip)) {
+        $rel_path = "eicar_test_files/eicar.$ext";
+        assert_script_run("curl -o $rel_path " . data_url("$rel_path"));
+    }
+
+    scan_and_parse "clamscan";
+    scan_and_parse "clamdscan";
+
     # Clean up
-    script_run 'rm -f test.hdb';
+    script_run "rm -f test.hdb";
+    script_run "rm -rf eicar_test_files/";
 }
 
 sub post_run_hook {
     assert_script_run("swapoff /var/lib/swap/swapfile") if is_jeos && !(is_opensuse && check_var('ARCH', 'aarch64'));
+}
+
+sub test_flags {
+    return {fatal => 0};
 }
 
 1;

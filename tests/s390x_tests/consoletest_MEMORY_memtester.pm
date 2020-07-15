@@ -1,8 +1,6 @@
 # SUSE’s openQA tests
 #
-# Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2018 SUSE LLC
-# Copyright (C) 2018 IBM Corp.
+# Copyright © 2018-2019 IBM Corp.
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -22,18 +20,13 @@ use strict;
 sub run {
     my $self = shift;
     $self->copy_testsuite('MEMORY_memtester');
-    assert_script_run "zypper in -y gcc";
+    zypper_call "in gcc";
     assert_script_run "tar -xzf memtester*tar.gz && rm -rf memtester*tar.gz";
     assert_script_run "cd memtester*&& make && make install && cd ..";
 
     $self->execute_script('runMemtester.sh', '100M 3', 600);
 
     assert_script_run "rm -f /usr/bin/memtester; rm -rf /root/MEMORY_memtester";
-}
-
-sub post_fail_hook {
-    my $self = shift;
-    #    $self->export_logs();
 }
 
 sub test_flags {

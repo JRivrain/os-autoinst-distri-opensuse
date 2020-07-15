@@ -11,13 +11,14 @@
 # Tags: poo#9576
 # Maintainer: Martin Loviska <mloviska@suse.com>
 
-use base "opensusebasetest";
+use base "y2_installbase";
 use strict;
 use warnings;
 use testapi;
 use lockapi;
-use mmapi;
 use mm_network;
+use version_utils 'is_opensuse';
+
 
 # poo#9576
 sub run {
@@ -25,11 +26,12 @@ sub run {
     assert_screen("remote_slave_ready", 350);
     mutex_create("installation_ready");
     # wait while whole installation process finishes
-    $self->wait_boot(bootloader_time => 1800);
+    mutex_wait("installation_done");
+    if (is_opensuse) {
+        record_soft_failure('bsc#1164503');
+        send_key('ctrl-alt-delete');
+    }
+    $self->wait_boot(bootloader_time => 120);
 }
 
-sub test_flags {
-    return {fatal => 1};
-}
 1;
-

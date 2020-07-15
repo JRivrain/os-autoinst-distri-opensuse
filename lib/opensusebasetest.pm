@@ -1,18 +1,33 @@
+# SUSE's openQA tests
+#
+# Copyright © 2009-2013 Bernhard M. Wiedemann
+# Copyright © 2012-2020 SUSE LLC
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.  This file is offered as-is,
+# without any warranty.
+
 package opensusebasetest;
 use base 'basetest';
 
-use bootloader_setup qw(stop_grub_timeout boot_local_disk tianocore_enter_menu zkvm_add_disk zkvm_add_pty zkvm_add_interface);
-use testapi;
+use bootloader_setup qw(boot_grub_item boot_local_disk stop_grub_timeout tianocore_enter_menu zkvm_add_disk zkvm_add_pty zkvm_add_interface);
+use testapi qw(is_serial_terminal :DEFAULT);
 use strict;
 use warnings;
 use utils;
+use Utils::Backends qw(has_serial_over_ssh is_pvm);
 use lockapi 'mutex_wait';
 use serial_terminal 'get_login_message';
-use version_utils qw(is_sle is_leap is_upgrade is_aarch64_uefi_boot_hdd is_tumbleweed);
+use version_utils qw(is_sle is_leap is_upgrade is_aarch64_uefi_boot_hdd is_tumbleweed is_jeos is_sles4sap is_desktop_installed);
+use main_common 'opensuse_welcome_applicable';
 use isotovideo;
 use IO::Socket::INET;
+use x11utils qw(handle_login ensure_unlocked_desktop);
 
 # Base class for all openSUSE tests
+
+sub grub_select;
 
 sub new {
     my ($class, $args) = @_;
@@ -22,21 +37,45 @@ sub new {
     return $self;
 }
 
-# Additional to backend testapi 'clear-console' we do a needle match to ensure
-# continuation only after verification
+=head2 clear_and_verify_console
+
+ clear_and_verify_console();
+
+Clear the console and ensure that it really got cleared
+using a needle.
+
+=cut
 sub clear_and_verify_console {
     my ($self) = @_;
 
     clear_console;
-    assert_screen('cleared-console');
-
+    assert_screen('cleared-console') unless is_serial_terminal();
 }
 
+=head2 post_run_hook
+
+ post_run_hook();
+
+This method will be called after each module finished.
+It will B<not> get executed when the test module failed.
+Test modules (or their intermediate base classes) may overwrite
+this method.
+
+=cut
 sub post_run_hook {
     my ($self) = @_;
     # overloaded in x11 and console
 }
 
+=head2 save_and_upload_log
+
+ save_and_upload_log($cmd, $file [, timeout => $timeout] [, screenshot => $screenshot] [, noupload => $noupload]);
+
+Will run C<$cmd> on the SUT (without caring for the return code) and tee the standard output to a file called C<$file>.
+The C<$timeout> parameter specifies how long C<$cmd> may run.
+When C<$cmd> returns, the output file will be uploaded to openQA unless C<$noupload> is set.
+Afterwards a screenshot will be created if C<$screenshot> is set.
+=cut
 sub save_and_upload_log {
     my ($self, $cmd, $file, $args) = @_;
     script_run("$cmd | tee $file", $args->{timeout});
@@ -44,6 +83,17 @@ sub save_and_upload_log {
     save_screenshot if $args->{screenshot};
 }
 
+=head2 tar_and_upload_log
+
+ tar_and_upload_log($sources, $dest, [, timeout => $timeout] [, screenshot => $screenshot] [, noupload => $noupload]);
+
+Will create an xz compressed tar archive with filename C<$dest> from the folder(s) listed in C<$sources>.
+The return code of C<tar> will be ignored.
+The C<$timeout> parameter specifies how long C<tar> may run.
+When C<tar> returns, the output file will be uploaded to openQA unless C<$noupload> is set.
+Afterwards a screenshot will be created if C<$screenshot> is set.
+
+=cut
 sub tar_and_upload_log {
     my ($self, $sources, $dest, $args) = @_;
     script_run("tar -jcv -f $dest $sources", $args->{timeout});
@@ -51,19 +101,43 @@ sub tar_and_upload_log {
     save_screenshot() if $args->{screenshot};
 }
 
+=head2 save_and_upload_systemd_unit_log
+
+ save_and_upload_systemd_unit_log($unit);
+
+Saves the journal of the systemd unit C<$unit> to C<journal_$unit.log> and uploads it to openQA.
+
+=cut
 sub save_and_upload_systemd_unit_log {
     my ($self, $unit) = @_;
-    $self->save_and_upload_log("journalctl --no-pager -u $unit", "journal_$unit.log");
+    $self->save_and_upload_log("journalctl --no-pager -u $unit -o short-precise", "journal_$unit.log");
 }
 
-# btrfs maintenance jobs lead to the system being unresponsive and affects SUT's performance
-# Not to waste time during investigation of the failures, we would like to detect
-# if such jobs are running, providing a hint why test timed out.
+=head2 detect_bsc_1063638
+
+ detect_bsc_1063638();
+
+Btrfs maintenance jobs lead to the system being unresponsive and affects SUT's performance.
+Not to waste time during investigation of the failures, we would like to detect
+if such jobs are running, providing a hint why test timed out.
+This method will create a softfail if such a problem is detected.
+
+=cut
 sub detect_bsc_1063638 {
     # Detect bsc#1063638
     record_soft_failure 'bsc#1063638' if (script_run('ps x | grep "btrfs-\(scrub\|balance\|trim\)"') == 0);
 }
 
+=head2 problem_detection
+
+ problem_detection();
+
+This method will upload a number of logs and debugging information.
+This includes a log with all journal errors, a systemd unit plot and the
+output of rpmverify.
+The files will be uploaded as a single tarball called C<problem_detection_logs.tar.xz>.
+
+=cut
 sub problem_detection {
     my $self = shift;
 
@@ -90,11 +164,11 @@ sub problem_detection {
     clear_console;
 
     # Errors in journal
-    $self->save_and_upload_log("journalctl --no-pager -p 'err'", "journalctl-errors.txt", {screenshot => 1, noupload => 1});
+    $self->save_and_upload_log("journalctl --no-pager -p 'err' -o short-precise", "journalctl-errors.txt", {screenshot => 1, noupload => 1});
     clear_console;
 
     # Tracebacks in journal
-    $self->save_and_upload_log('journalctl | grep -i traceback', "journalctl-tracebacks.txt", {screenshot => 1, noupload => 1});
+    $self->save_and_upload_log('journalctl -o short-precise | grep -i traceback', "journalctl-tracebacks.txt", {screenshot => 1, noupload => 1});
     clear_console;
 
     # Segmentation faults
@@ -139,6 +213,13 @@ done", "binaries-with-missing-libraries.txt", {timeout => 60, noupload => 1});
     type_string "popd\n";
 }
 
+=head2 investigate_yast2_failure
+
+ investigate_yast2_failure();
+
+Inspect the YaST2 logfile checking for known issues.
+
+=cut
 sub investigate_yast2_failure {
     my ($self) = shift;
 
@@ -150,20 +231,35 @@ sub investigate_yast2_failure {
     }
     # Hash with critical errors in YaST2 and bug reference if any
     my %y2log_errors = (
-        "<3>.*Cannot parse the data from server"     => 'bsc#1126045',
-        "No textdomain configured"                   => 'bsc#1127756',    # Detecting missing translations
-                                                                          # Detecting specifi errors proposed by the YaST dev team
-        "nothing provides"                           => undef,            # Detecting missing required packages
-        "but this requirement cannot be provided"    => undef,            # Detecting package conflicts
-        "Could not load icon|Couldn't load pixmap"   => undef,            # Detecting missing icons
-        "Internal error. Please report a bug report" => undef,            # Detecting internal errors
+        "No textdomain configured"                   => undef,    # Detecting missing translations
+                                                                  # Detecting specific errors proposed by the YaST dev team
+        "nothing provides (?!\/bin\/sh)"             => undef,    # Detecting missing required packages
+        "but this requirement cannot be provided"    => undef,    # Detecting package conflicts
+        "Could not load icon|Couldn't load pixmap"   => undef,    # Detecting missing icons
+        "Internal error. Please report a bug report" => undef,    # Detecting internal errors
+        "error.*@.*is not allowed"                   => undef,    # Detecting incompatible type classes, see bsc#1158589
     );
     # Hash with known errors which we don't want to track in each postfail hook
     my %y2log_known_errors = (
-        "<3>.*no[t]? mount" => 'bsc#1092088',                             # Detect not mounted partition
-
+        "<1>.*nothing provides \/bin\/sh"                 => 'bsc#1170322',
+        "<3>.*QueryWidget failed.*RichText.*VScrollValue" => 'bsc#1167248',
+        "<3>.*Solverrun finished with an ERROR"           => 'bsc#1170322',
+        "<3>.*3 packages failed.*badlist"                 => 'bsc#1170322',
+        "<3>.*Unknown option.*MultiSelectionBox widget"   => 'bsc#1170431',
+        "<3>.*XML.*Argument.*to Read.*is nil"             => 'bsc#1170432',
+        "<3>.*no[t]? mount"                               => 'bsc#1092088',    # Detect not mounted partition
+        "<3>.*lib/cheetah.rb"                             => 'bsc#1153749',
         # The error below will be cleaned up, see https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup
         # Adding reference to trello, detect those in single scenario
+        # (build97.1) regressions
+        # found https://openqa.suse.de/tests/3646274#step/logs_from_installation_system/412
+        "<3>.*SCR::Dir\\(\\) failed"                            => 'bsc#1158186',
+        "<3>.*Unknown desktop file: installation"               => 'bsc#1158186',
+        "<3>.*Bad options for module: virtio_net"               => 'bsc#1158186',
+        "<3>.*Wrong value for path ."                           => 'bsc#1158186',
+        "<3>.*setOptions:Empty map"                             => 'bsc#1158186',
+        "<3>.*Unmounting media failed"                          => 'bsc#1158186',
+        "<3>.*No base product has been found"                   => 'bsc#1158186',
         "<3>.*Error output: dracut:"                            => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
         "<3>.*Reading install.inf"                              => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
         "<3>.*shellcommand"                                     => 'https://trello.com/c/5qTQZKH3/2918-sp2-logs-cleanup',
@@ -255,7 +351,7 @@ sub investigate_yast2_failure {
         @detected_errors = (keys %y2log_known_errors);
     }
     # Test if zgrep is available
-    my $is_zgrep_available = (script_output('type zgrep') == 0);
+    my $is_zgrep_available = (script_run('type zgrep') == 0);
     my $cmd_prefix         = ($is_zgrep_available ? 'zgrep' : 'grep');
     # If zgrep is available, using wildcard to search in rolled archives,
     # And only in y2log in case of grep
@@ -274,7 +370,7 @@ sub investigate_yast2_failure {
             $detected_errors_detailed .= "$y2log_error_result\n\n$delimiter\n\n";
         }
     }
-    ## Check generic erros and exclude already detected issues
+    ## Check generic errors and exclude already detected issues
     if (my $y2log_error_result = script_output("$cmd_prefix -E \"<3>|<5>\" $cmd_postfix")) {
         # remove known errors from the log
         for my $known_error (@detected_errors) {
@@ -306,16 +402,30 @@ sub investigate_yast2_failure {
     }
 }
 
-# Logs that make sense for any failure
+=head2 export_logs_basic
+
+ export_logs_basic();
+
+Upload logs that make sense for any failure.
+This includes C</proc/loadavg>, C<ps axf>, complete journal since last boot, C<dmesg> and C</etc/sysconfig>.
+
+=cut
 sub export_logs_basic {
     my ($self) = @_;
-    $self->save_and_upload_log('cat /proc/loadavg', '/tmp/loadavg.txt', {screenshot => 1});
-    $self->save_and_upload_log('ps axf',            '/tmp/psaxf.log',   {screenshot => 1});
-    $self->save_and_upload_log('journalctl -b',     '/tmp/journal.log', {screenshot => 1});
-    $self->save_and_upload_log('dmesg',             '/tmp/dmesg.log',   {screenshot => 1});
+    $self->save_and_upload_log('cat /proc/loadavg',              '/tmp/loadavg.txt', {screenshot => 1});
+    $self->save_and_upload_log('ps axf',                         '/tmp/psaxf.log',   {screenshot => 1});
+    $self->save_and_upload_log('journalctl -b -o short-precise', '/tmp/journal.log', {screenshot => 1});
+    $self->save_and_upload_log('dmesg',                          '/tmp/dmesg.log',   {screenshot => 1});
     $self->tar_and_upload_log('/etc/sysconfig', '/tmp/sysconfig.tar.bz2');
 }
 
+=head2 export_logs
+
+ export_logs();
+
+This method will call several other log gathering methods from this class.
+
+=cut
 sub export_logs {
     my ($self) = shift;
     select_console 'log-console';
@@ -336,28 +446,63 @@ sub export_logs {
     $self->save_and_upload_log('systemctl status',          '/tmp/systemctl_status.log');
     $self->save_and_upload_log('systemctl',                 '/tmp/systemctl.log', {screenshot => 1});
 
-    script_run "save_y2logs /tmp/y2logs_clone.tar.bz2";
-    upload_logs "/tmp/y2logs_clone.tar.bz2";
+    my $compression = is_sle('=12-sp1') ? 'bz2' : 'xz';
+    script_run "save_y2logs /tmp/y2logs_clone.tar.$compression";
+    upload_logs "/tmp/y2logs_clone.tar.$compression";
+    if ($utils::IN_ZYPPER_CALL) {
+        script_run("zypper -n patch --debug-solver --with-interactive -l");
+        script_run("tar -cvjf /tmp/solverTestCase.tar.bz2 /var/log/zypper.solverTestCase/*");
+        upload_logs "/tmp/solverTestCase.tar.bz2 ";
+    }
     $self->investigate_yast2_failure();
 }
 
+=head2 export_logs_locale
+
+ export_logs_locale();
+
+Upload logs related to system locale settings.
+This includes C<locale>, C<localectl> and C</etc/vconsole.conf>.
+
+=cut
 sub export_logs_locale {
     my ($self) = shift;
-    $self->save_and_upload_log('locale',           '/tmp/locale.log');
-    $self->save_and_upload_log('localectl status', '/tmp/localectl.log');
+    $self->save_and_upload_log('locale',                 '/tmp/locale.log');
+    $self->save_and_upload_log('localectl status',       '/tmp/localectl.log');
+    $self->save_and_upload_log('cat /etc/vconsole.conf', '/tmp/vconsole.conf');
 }
 
+=head2 upload_packagekit_logs
+
+ upload_packagekit_logs();
+
+Upload C</var/log/pk_backend_zypp>.
+
+=cut
 sub upload_packagekit_logs {
     my ($self) = @_;
     upload_logs '/var/log/pk_backend_zypp';
 }
 
-# Set a simple reproducible prompt for easier needle matching without hostname
+=head2 set_standard_prompt
+
+ set_standard_prompt();
+
+Set a simple reproducible prompt for easier needle matching without hostname.
+
+=cut
 sub set_standard_prompt {
     my ($self, $user) = @_;
     $testapi::distri->set_standard_prompt($user);
 }
 
+=head2 export_logs_desktop
+
+ export_logs_desktop();
+
+Upload several KDE, GNOME, X11, GDM and SDDM related logs and configs.
+
+=cut
 sub export_logs_desktop {
     my ($self) = @_;
     select_console 'log-console';
@@ -372,7 +517,7 @@ sub export_logs_desktop {
         }
         save_screenshot;
     } elsif (check_var("DESKTOP", "gnome")) {
-        $self->tar_and_upload_log('/home/bernhard/.cache/gdm', '/tmp/gdm.tar.bz2');
+        $self->tar_and_upload_log("/home/$username/.cache/gdm", '/tmp/gdm.tar.bz2');
     }
 
     # check whether xorg logs exist in user's home, if yes, upload xorg logs
@@ -397,8 +542,14 @@ sub export_logs_desktop {
     }
 }
 
-# Our aarch64 setup fails to boot properly from an installed hard disk so
-# point the firmware boot manager to the right file.
+=head2 handle_uefi_boot_disk_workaround
+
+ handle_uefi_boot_disk_workaround();
+
+Our aarch64 setup fails to boot properly from an installed hard disk so
+point the firmware boot manager to the right file.
+
+=cut
 sub handle_uefi_boot_disk_workaround {
     my ($self) = @_;
     record_info 'workaround', 'Manually selecting boot entry, see bsc#1022064 for details';
@@ -416,7 +567,7 @@ sub handle_uefi_boot_disk_workaround {
     save_screenshot;
     wait_screen_change { send_key 'ret' };
     # <sles> or <opensuse>
-    send_key 'up';
+    send_key_until_needlematch 'tianocore-select_opensuse_or_sles', 'up';
     save_screenshot;
     wait_screen_change { send_key 'ret' };
     # efi file
@@ -426,7 +577,7 @@ sub handle_uefi_boot_disk_workaround {
 
 =head2 wait_grub
 
-  wait_grub([bootloader_time => $bootloader_time] [,in_grub => $in_grub]);
+ wait_grub([bootloader_time => $bootloader_time] [,in_grub => $in_grub]);
 
 Makes sure the bootloader appears. Returns successfully when reached the bootloader menu, ready to control it further or continue. The time waiting for the bootloader can be configured with
 C<$bootloader_time> in seconds. Set C<$in_grub> to 1 when the
@@ -438,10 +589,9 @@ sub wait_grub {
     my $in_grub         = $args{in_grub}         // 0;
     my @tags            = ('grub2');
     push @tags, 'bootloader-shim-import-prompt'   if get_var('UEFI');
-    push @tags, 'boot-live-' . get_var('DESKTOP') if get_var('LIVETEST');             # LIVETEST won't to do installation and no grub2 menu show up
+    push @tags, 'boot-live-' . get_var('DESKTOP') if get_var('LIVETEST');    # LIVETEST won't to do installation and no grub2 menu show up
     push @tags, 'bootloader'                      if get_var('OFW');
     push @tags, 'encrypted-disk-password-prompt'  if get_var('ENCRYPT');
-    push @tags, 'linux-login'                     if get_var('KEEP_GRUB_TIMEOUT');    # Also wait for linux-login if grub timeout was not disabled
     if (get_var('ONLINE_MIGRATION')) {
         push @tags, 'migration-source-system-grub2';
     }
@@ -458,6 +608,7 @@ sub wait_grub {
     # Refer to ticket: https://progress.opensuse.org/issues/49340
     $self->handle_uefi_boot_disk_workaround
       if (is_aarch64_uefi_boot_hdd
+        && !is_jeos
         && !$in_grub
         && (!(isotovideo::get_version() >= 12 && get_var('UEFI_PFLASH_VARS')) || get_var('ONLINE_MIGRATION') || get_var('UPGRADE') || get_var('ZDUP')));
     assert_screen(\@tags, $bootloader_time);
@@ -478,20 +629,14 @@ sub wait_grub {
     elsif (match_has_tag('encrypted-disk-password-prompt')) {
         # unlock encrypted disk before grub
         workaround_type_encrypted_passphrase;
-        assert_screen "grub2", 15;
-    }
-    # If KEEP_GRUB_TIMEOUT is set, SUT may be at linux-login already, so no need to abort in that case
-    elsif (!match_has_tag("grub2") and !match_has_tag('linux-login')) {
-        # check_screen timeout
-        my $failneedle = get_var('KEEP_GRUB_TIMEOUT') ? 'linux-login' : 'grub2';
-        die "needle '$failneedle' not found";
+        assert_screen("grub2", timeout => ((is_pvm) ? 300 : 90));
     }
     mutex_wait 'support_server_ready' if get_var('USE_SUPPORT_SERVER');
 }
 
 =head2 wait_grub_to_boot_on_local_disk
 
-  wait_grub_to_boot_on_local_disk
+ wait_grub_to_boot_on_local_disk
 
 When bootloader appears, make sure to boot from local disk when it is on aarch64.
 =cut
@@ -514,9 +659,299 @@ sub wait_grub_to_boot_on_local_disk {
     }
 }
 
+sub reconnect_s390 {
+    my (%args)     = @_;
+    my $ready_time = $args{ready_time};
+    my $textmode   = $args{textmode};
+    return undef unless check_var('ARCH', 's390x');
+    my $login_ready = get_login_message();
+    if (check_var('BACKEND', 's390x')) {
+        my $console = console('x3270');
+        # skip grub handle for 11sp4
+        if (!is_sle('=11-SP4')) {
+            handle_grub_zvm($console);
+        }
+        $console->expect_3270(
+            output_delim => $login_ready,
+            timeout      => $ready_time + 100
+        );
+
+        # give the system time to have routes up
+        # and start serial grab again
+        sleep 30;
+        select_console('iucvconn');
+    }
+    else {
+        my $worker_hostname = get_required_var('WORKER_HOSTNAME');
+        my $virsh_guest     = get_required_var('VIRSH_GUEST');
+        workaround_type_encrypted_passphrase if get_var('S390_ZKVM');
+
+        select_console('svirt');
+        save_svirt_pty;
+
+        wait_serial('GNU GRUB', 180) || diag 'Could not find GRUB screen, continuing nevertheless, trying to boot';
+        grub_select;
+
+        type_line_svirt '', expect => $login_ready, timeout => $ready_time + 100, fail_message => 'Could not find login prompt';
+        type_line_svirt "root", expect => 'Password';
+        type_line_svirt "$testapi::password";
+        type_line_svirt "systemctl is-active network", expect => 'active';
+        type_line_svirt 'systemctl is-active sshd',    expect => 'active';
+
+        # make sure we can reach the SSH server in the SUT, try up to 1 min (12 * 5s)
+        my $retries = 12;
+        my $port    = 22;
+        for my $i (0 .. $retries) {
+            die "The SSH Port in the SUT could not be reached within 1 minute, considering a product issue" if $i == $retries;
+            if (IO::Socket::INET->new(PeerAddr => "$virsh_guest", PeerPort => $port)) {
+                record_info("ssh port open", "check for port $port on $virsh_guest successful");
+                last;
+            }
+            else {
+                record_info("ssh port closed", "check for port $port on $virsh_guest failed", result => 'fail');
+            }
+            sleep 5;
+        }
+        save_screenshot;
+    }
+
+    # on z/(K)VM we need to re-select a console
+    if ($textmode || check_var('DESKTOP', 'textmode')) {
+        select_console('root-console');
+    }
+    else {
+        select_console('x11', await_console => 0);
+    }
+    return 1;
+}
+
+# On Xen we have to re-connect to serial line as Xen closed it after restart
+sub reconnect_xen {
+    return unless check_var('VIRSH_VMM_FAMILY', 'xen');
+    wait_serial("reboot: (Restarting system|System halted)") if check_var('VIRSH_VMM_TYPE', 'linux');
+    console('svirt')->attach_to_running;
+    select_console('sut');
+}
+
+sub handle_emergency_if_needed {
+    handle_emergency if (match_has_tag('emergency-shell') or match_has_tag('emergency-mode'));
+}
+
+sub handle_displaymanager_login {
+    my ($self, %args) = @_;
+    assert_screen [qw(displaymanager emergency-shell emergency-mode)], $args{ready_time};
+    handle_emergency_if_needed;
+    handle_login unless $args{nologin};
+}
+
+=head2 handle_pxeboot
+
+ handle_pxeboot(bootloader_time => $bootloader_time, pxemenu => $pxemenu, pxeselect => $pxeselect);
+
+Handle a textmode PXE bootloader menu by means of two needle tags:
+C<$pxemenu> to match the initial menu, C<$pxeselect> to match the
+menu with the desired entry selected.
+=cut
+sub handle_pxeboot {
+    my ($self, %args) = @_;
+    my $bootloader_time = $args{bootloader_time};
+
+    assert_screen($args{pxemenu}, $bootloader_time);
+    unless (match_has_tag($args{pxeselect})) {
+        send_key_until_needlematch($args{pxeselect}, 'down');
+    }
+    send_key 'ret';
+}
+
+sub grub_select {
+    if ((my $grub_nondefault = get_var('GRUB_BOOT_NONDEFAULT', 0)) gt 0) {
+        my $menu = $grub_nondefault * 2 + 1;
+        bmwqemu::fctinfo("Boot non-default grub option $grub_nondefault (menu item $menu)");
+        boot_grub_item($menu);
+    } elsif (my $first_menu = get_var('GRUB_SELECT_FIRST_MENU')) {
+        if (my $second_menu = get_var('GRUB_SELECT_SECOND_MENU')) {
+            bmwqemu::fctinfo("Boot $first_menu > $second_menu");
+            boot_grub_item($first_menu, $second_menu);
+        } else {
+            bmwqemu::fctinfo("Boot $first_menu");
+            boot_grub_item($first_menu);
+        }
+    }
+    elsif (!get_var('S390_ZKVM')) {
+        # confirm default choice
+        send_key 'ret';
+    }
+}
+
+sub handle_grub {
+    my ($self, %args) = @_;
+    my $bootloader_time  = $args{bootloader_time};
+    my $in_grub          = $args{in_grub};
+    my $linux_boot_entry = $args{linux_boot_entry} // (is_sle('15+') ? 15 : 14);
+
+    # On Xen PV and svirt we don't see a Grub menu
+    # If KEEP_GRUB_TIMEOUT is defined it means that GRUB menu will appear only for one second
+    return if (check_var('VIRSH_VMM_FAMILY', 'xen') && check_var('VIRSH_VMM_TYPE', 'linux') && check_var('BACKEND', 'svirt') || check_var('KEEP_GRUB_TIMEOUT', '1'));
+    $self->wait_grub(bootloader_time => $bootloader_time, in_grub => $in_grub);
+    if (my $boot_params = get_var('EXTRABOOTPARAMS_BOOT_LOCAL')) {
+        wait_screen_change { send_key 'e' };
+        for (1 .. $linux_boot_entry) { send_key 'down' }
+        wait_screen_change { send_key 'end' };
+        send_key_until_needlematch(get_var('EXTRABOOTPARAMS_DELETE_NEEDLE_TARGET'), 'left', 1000) if get_var('EXTRABOOTPARAMS_DELETE_NEEDLE_TARGET');
+        for (1 .. get_var('EXTRABOOTPARAMS_DELETE_CHARACTERS', 0)) { send_key 'backspace' }
+        bmwqemu::fctinfo("Adding boot params '$boot_params'");
+        type_string_very_slow " $boot_params ";
+        save_screenshot;
+        send_key 'ctrl-x';
+    }
+    else {
+        grub_select;
+    }
+}
+
+sub wait_boot_textmode {
+    my ($self, %args) = @_;
+    # For s390x we validate system boot in reconnect_mgmt_console test module
+    # and use ssh connection to operate on the SUT, so do early return
+    return if check_var('ARCH', 's390x');
+
+    my $ready_time       = $args{ready_time};
+    my $textmode_needles = [qw(linux-login emergency-shell emergency-mode)];
+    # 2nd stage of autoyast can be considered as linux-login
+    push @{$textmode_needles}, 'autoyast-init-second-stage' if get_var('AUTOYAST');
+    # Soft-fail for user_defined_snapshot in extra_tests_on_gnome and extra_tests_on_gnome_on_ppc
+    # if not able to boot from snapshot
+    if (get_var('EXTRATEST', '') !~ /desktop/) {
+        assert_screen $textmode_needles, $ready_time;
+    }
+    elsif (is_sle('<15') && !check_screen $textmode_needles, $ready_time / 2) {
+        # We are not able to boot due to bsc#980337
+        record_soft_failure 'bsc#980337';
+        # Switch to root console and continue
+        select_console 'root-console';
+    }
+    elsif (check_screen 'displaymanager', 90) {
+        # due to workaround on sle15+ is test user_defined_snapshot expecting to boot textmode despite snapshot booted properly
+        select_console 'root-console';
+    }
+
+    handle_emergency_if_needed;
+
+    reset_consoles;
+    $self->{in_wait_boot} = 0;
+    return;
+
+}
+
+sub handle_broken_autologin_boo1102563 {
+    record_soft_failure 'boo#1102563 - GNOME autologin broken. Handle login and disable Wayland for login page to make it work next time';
+    handle_login;
+    assert_screen 'generic-desktop';
+    # Force the login screen to use Xorg to get autologin working
+    # (needed for additional tests using boot_to_desktop)
+    x11_start_program('xterm');
+    wait_still_screen;
+    script_sudo('sed -i s/#WaylandEnable=false/WaylandEnable=false/ /etc/gdm/custom.conf');
+    wait_screen_change { send_key 'alt-f4' };
+}
+
+sub handle_additional_polkit_windows_bsc1157928 {
+    record_soft_failure 'bsc#1157928 - deal with additional polkit windows';
+    wait_still_screen(3);
+    ensure_unlocked_desktop;
+    # deal with potential followup authentication window which is not
+    # actually a login screen but polkit asking for modification to system
+    # repositories
+    wait_still_screen(3);
+    ensure_unlocked_desktop;
+}
+
+=head2 wait_boot_past_bootloader
+
+ wait_boot_past_bootloader([, textmode => $textmode] [,ready_time => $ready_time] [, nologin => $nologin] [, forcenologin => $forcenologin]);
+
+Waits until the system is booted, every step after the bootloader or
+bootloader menu. Returns successfully when the system is ready on a login
+prompt or logged in desktop. Set C<$textmode> to 1 when the text mode login
+prompt should be expected rather than a desktop or display manager.  Expects
+already unlocked encrypted disks, see C<wait_boot> for handling these in
+before.  The time waiting for the system to be fully booted can be configured
+with C<$ready_time> in seconds. C<$forcenologin> makes this function
+behave as if the env var NOAUTOLOGIN was set.
+=cut
+sub wait_boot_past_bootloader {
+    my ($self, %args) = @_;
+    my $textmode     = $args{textmode};
+    my $ready_time   = $args{ready_time} // ((check_var('VIRSH_VMM_FAMILY', 'hyperv') || check_var('BACKEND', 'ipmi')) ? 500 : 300);
+    my $nologin      = $args{nologin};
+    my $forcenologin = $args{forcenologin};
+
+    # On IPMI, when selecting x11 console, we are connecting to the VNC server on the SUT.
+    # select_console('x11'); also performs a login, so we should be at generic-desktop.
+    my $gnome_ipmi = (check_var('BACKEND', 'ipmi') && check_var('DESKTOP', 'gnome'));
+    if ($gnome_ipmi) {
+        # first boot takes sometimes quite long time, ensure that it reaches login prompt
+        $self->wait_boot_textmode(ready_time => $ready_time);
+        select_console('x11');
+    }
+    elsif ($textmode || check_var('DESKTOP', 'textmode')) {
+        return $self->wait_boot_textmode(ready_time => $ready_time);
+    }
+
+    # On SLES4SAP upgrade tests with desktop, only check for a DM screen with the SAP System
+    # Administrator user listed but do not attempt to login
+    if (!is_sle('<=11-SP4') && get_var('HDDVERSION') && is_desktop_installed && is_upgrade && is_sles4sap) {
+        assert_screen 'displaymanager-sapadm', $ready_time;
+        wait_still_screen;    # We need to ensure that we are in a stable state
+        return;
+    }
+
+    $self->handle_displaymanager_login(ready_time => $ready_time, nologin => $nologin) if (get_var("NOAUTOLOGIN") || get_var("XDMUSED") || $nologin || $forcenologin);
+    return if $args{nologin};
+
+    my @tags = qw(generic-desktop emergency-shell emergency-mode);
+    push(@tags, 'opensuse-welcome') if opensuse_welcome_applicable;
+
+    # boo#1102563 - autologin fails on aarch64 with GNOME on current Tumbleweed
+    if (!is_sle('<=15') && !is_leap('<=15.0') && check_var('ARCH', 'aarch64') && check_var('DESKTOP', 'gnome')) {
+        push(@tags, 'displaymanager');
+        # Workaround for bsc#1169723
+        push(@tags, 'guest-disable-display');
+    }
+    # bsc#1157928 - deal with additional polkit windows
+    if (is_sle && !is_sle('<=15-SP1')) {
+        push(@tags, 'authentication-required-user-settings');
+    }
+
+    # GNOME and KDE get into screenlock after 5 minutes without activities.
+    # using multiple check intervals here then we can get the wrong desktop
+    # screenshot at least in case desktop screenshot changed, otherwise we get
+    # the screenlock screenshot.
+    my $timeout        = $ready_time;
+    my $check_interval = 30;
+    while ($timeout > $check_interval) {
+        my $ret = check_screen \@tags, $check_interval;
+        last if $ret;
+        $timeout -= $check_interval;
+    }
+    # if we reached a logged in desktop we are done here
+    return 1 if match_has_tag('generic-desktop') || match_has_tag('opensuse-welcome');
+    # the last check after previous intervals must be fatal
+    assert_screen \@tags, $check_interval;
+    handle_emergency_if_needed;
+
+    handle_broken_autologin_boo1102563()          if match_has_tag('displaymanager');
+    handle_additional_polkit_windows_bsc1157928() if match_has_tag('authentication-required-user-settings');
+    if (match_has_tag('guest-disable-display')) {
+        record_soft_failure 'bsc#1169723 - [Build 174.1] openQA test fails in first_boot - Guest disabled display shown when boot up after migration';
+        send_key 'ret';
+    }
+    mouse_hide(1);
+}
+
 =head2 wait_boot
 
-  wait_boot([bootloader_time => $bootloader_time] [, textmode => $textmode] [,ready_time => $ready_time] [,in_grub => $in_grub] [, nologin => $nologin] [, forcenologin => $forcenologin]);
+ wait_boot([bootloader_time => $bootloader_time] [, textmode => $textmode] [,ready_time => $ready_time] [,in_grub => $in_grub] [, nologin => $nologin] [, forcenologin => $forcenologin]);
 
 Makes sure the bootloader appears and then boots to desktop or text mode
 correspondingly. Returns successfully when the system is ready on a login
@@ -534,13 +969,10 @@ the env var NOAUTOLOGIN was set.
 =cut
 sub wait_boot {
     my ($self, %args) = @_;
-    my $bootloader_time = $args{bootloader_time} // 100;
+    my $bootloader_time = $args{bootloader_time} // ((is_pvm) ? 200 : 100);
     my $textmode        = $args{textmode};
-    my $ready_time      = $args{ready_time} // 300;
+    my $ready_time      = $args{ready_time} // ((check_var('VIRSH_VMM_FAMILY', 'hyperv') || check_var('BACKEND', 'ipmi')) ? 500 : 300);
     my $in_grub         = $args{in_grub} // 0;
-    my $nologin         = $args{nologin};
-    my $forcenologin    = $args{forcenologin};
-    my $linux_boot_entry //= 14;
 
     die "wait_boot: got undefined class" unless $self;
     # used to register a post fail hook being active while we are waiting for
@@ -548,159 +980,52 @@ sub wait_boot {
     # shutting down or booting up
     $self->{in_wait_boot} = 1;
 
+    # for powerVM, it need switch console, it need wait longer time to
+    # get grub page. After we get grub page, the workflow will be same
+    # as others
+    $self->wait_grub(bootloader_time => $bootloader_time) if is_pvm;
+
     # Reset the consoles after the reboot: there is no user logged in anywhere
     reset_consoles;
-    # For IPMI machines PXE boot menu will appear first
-    # If KEEP_GRUB_TIMEOUT is set, SUT could be already in linux-login
-    if (check_var('BACKEND', 'ipmi') and !get_var('KEEP_GRUB_TIMEOUT')) {
-        select_console 'sol', await_console => 0;
-        # boot from harddrive
-        assert_screen([qw(virttest-pxe-menu qa-net-selection prague-pxe-menu pxe-menu)], 200);
-        send_key 'ret';
+    select_console('sol', await_console => 0) if check_var('BACKEND', 'ipmi');
+    if (reconnect_s390(textmode => $textmode, ready_time => $ready_time)) {
     }
-    # reconnect s390
-    if (check_var('ARCH', 's390x')) {
-        my $login_ready = get_login_message();
-        if (check_var('BACKEND', 's390x')) {
-            my $console = console('x3270');
-            handle_grub_zvm($console);
-            $console->expect_3270(
-                output_delim => $login_ready,
-                timeout      => $ready_time + 100
-            );
+    elsif (get_var('USE_SUPPORT_SERVER') && get_var('USE_SUPPORT_SERVER_PXE_CUSTOMKERNEL')) {
+        # A supportserver client to reboot via PXE after an initial installation.
+        # No GRUB menu. Instead, the mandatory parallel supportserver job is
+        # supposedly ready to provide the desired customized PXE boot menu.
 
-            # give the system time to have routes up
-            # and start serial grab again
-            sleep 30;
-            select_console('iucvconn');
-        }
-        else {
-            my $worker_hostname = get_required_var('WORKER_HOSTNAME');
-            my $virsh_guest     = get_required_var('VIRSH_GUEST');
-            workaround_type_encrypted_passphrase if get_var('S390_ZKVM');
-            wait_serial('GNU GRUB') || diag 'Could not find GRUB screen, continuing nevertheless, trying to boot';
-            select_console('svirt');
-            save_svirt_pty;
-            type_line_svirt '', expect => $login_ready, timeout => $ready_time + 100, fail_message => 'Could not find login prompt';
-            type_line_svirt "root", expect => 'Password';
-            type_line_svirt "$testapi::password";
-            type_line_svirt "systemctl is-active network", expect => 'active';
-            type_line_svirt 'systemctl is-active sshd',    expect => 'active';
-
-            # make sure we can reach the SSH server in the SUT, try up to 1 min (12 * 5s)
-            my $retries = 12;
-            my $port    = 22;
-            for my $i (0 .. $retries) {
-                die "The SSH Port in the SUT could not be reached within 1 minute, considering a product issue" if $i == $retries;
-                if (IO::Socket::INET->new(PeerAddr => "$virsh_guest", PeerPort => $port)) {
-                    record_info("ssh port open", "check for port $port on $virsh_guest successful");
-                    last;
-                }
-                else {
-                    record_info("ssh port closed", "check for port $port on $virsh_guest failed", result => 'fail');
-                }
-                sleep 5;
-            }
-            save_screenshot;
-        }
-
-        # on z/(K)VM we need to re-select a console
-        if ($textmode || check_var('DESKTOP', 'textmode')) {
-            select_console('root-console');
-        }
-        else {
-            select_console('x11', await_console => 0);
-        }
+        # Expected: three menu entries, one of them being "Custom kernel"
+        # (the boot configuration from the just-finished initial installation)
+        #
+        $self->handle_pxeboot(bootloader_time => $bootloader_time, pxemenu => 'pxe-custom-kernel', pxeselect => 'pxe-custom-kernel-selected');
     }
-    # On Xen PV and svirt we don't see a Grub menu
-    elsif (!(check_var('VIRSH_VMM_FAMILY', 'xen') && check_var('VIRSH_VMM_TYPE', 'linux') && check_var('BACKEND', 'svirt'))) {
-        $self->wait_grub(bootloader_time => $bootloader_time, in_grub => $in_grub);
-        if (my $boot_params = get_var('EXTRABOOTPARAMS_BOOT_LOCAL')) {
-            # TODO do we already have code to control the boot parameters? I
-            # think so
-            wait_screen_change { send_key 'e' };
-            for (1 .. $linux_boot_entry) { send_key 'down' }
-            wait_screen_change { send_key 'end' };
-            type_string_very_slow "$boot_params ";
-            save_screenshot;
-            send_key 'ctrl-x';
-        }
-        else {
-            # confirm default choice
-            send_key 'ret';
-        }
+    else {
+        $self->handle_grub(bootloader_time => $bootloader_time, in_grub => $in_grub);
     }
-
-    # On Xen we have to re-connect to serial line as Xen closed it after restart
-    if (check_var('VIRSH_VMM_FAMILY', 'xen')) {
-        wait_serial("reboot: (Restarting system|System halted)") if check_var('VIRSH_VMM_TYPE', 'linux');
-        console('svirt')->attach_to_running;
-        select_console('sut');
-    }
+    reconnect_xen if check_var('VIRSH_VMM_FAMILY', 'xen');
 
     # on s390x svirt encryption is unlocked with workaround_type_encrypted_passphrase before here
-    unlock_if_encrypted if !get_var('S390_ZKVM');
+    unlock_if_encrypted unless get_var('S390_ZKVM');
 
-    if ($textmode || check_var('DESKTOP', 'textmode')) {
-        my $textmode_needles = [qw(linux-login emergency-shell emergency-mode)];
-        # 2nd stage of autoyast can be considered as linux-login
-        push @{$textmode_needles}, 'autoyast-init-second-stage' if get_var('AUTOYAST');
-        # Soft-fail for user_defined_snapshot in extra_tests_on_gnome and extra_tests_on_gnome_on_ppc
-        # if not able to boot from snapshot
-        if (get_var('TEST') !~ /extra_tests_on_gnome/) {
-            assert_screen $textmode_needles, $ready_time;
-        }
-        elsif (!check_screen $textmode_needles, $ready_time) {
-            # We are not able to boot due to bsc#980337
-            record_soft_failure 'bsc#980337';
-            # Switch to root console and continue
-            select_console 'root-console';
-        }
-
-        handle_emergency if (match_has_tag('emergency-shell') or match_has_tag('emergency-mode'));
-
-        reset_consoles;
-        $self->{in_wait_boot} = 0;
-        return;
-    }
-
-    mouse_hide();
-
-    if (get_var("NOAUTOLOGIN") || get_var("XDMUSED") || $forcenologin) {
-        assert_screen [qw(displaymanager emergency-shell emergency-mode)], $ready_time;
-        handle_emergency if (match_has_tag('emergency-shell') or match_has_tag('emergency-mode'));
-
-        if (!$nologin) {
-            # SLE11 SP4 kde desktop do not need type username
-            if (get_var('DM_NEEDS_USERNAME')) {
-                type_string "$username\n";
-            }
-            # log in
-            #assert_screen "dm-password-input", 10;
-            elsif (check_var('DESKTOP', 'gnome')) {
-                # In GNOME/gdm, we do not have to enter a username, but we have to select it
-                if (is_tumbleweed) {
-                    send_key 'tab';
-                }
-                send_key 'ret';
-            }
-
-            assert_screen 'displaymanager-password-prompt', no_wait => 1;
-            type_password $password. "\n";
-        }
-        else {
-            mouse_hide(1);
-            $self->{in_wait_boot} = 0;
-            return;
-        }
-    }
-
-    assert_screen [qw(generic-desktop emergency-shell emergency-mode)], $ready_time + 100;
-    handle_emergency if (match_has_tag('emergency-shell') or match_has_tag('emergency-mode'));
-    mouse_hide(1);
+    $self->wait_boot_past_bootloader(%args);
     $self->{in_wait_boot} = 0;
 }
 
+=head2 enter_test_text
+
+ enter_test_text($name [, cmd => $cmd] [, slow => $slow]);
+
+For testing a text editor or terminal emulator.
+This will type some newlines and then enter the following text:
+
+ If you can see this text $name is working.
+
+C<$name> will default to "I<your program>".
+If C<$slow> is set, the typing will be very slow.
+If C<$cmd> is set, the text will be prefixed by an C<echo> command.
+
+=cut
 sub enter_test_text {
     my ($self, $name, %args) = @_;
     $name       //= 'your program';
@@ -710,7 +1035,7 @@ sub enter_test_text {
     my $text = "If you can see this text $name is working.\n";
     $text = 'echo ' . $text if $args{cmd};
     if ($args{slow}) {
-        type_string_slow $text;
+        type_string_very_slow $text;
     }
     else {
         type_string $text;
@@ -720,21 +1045,21 @@ sub enter_test_text {
 
 =head2 firewall
 
-  firewall();
+ firewall();
 
 Return the default expected firewall implementation depending on the product
 under test, the version and if the SUT is an upgrade.
 
 =cut
 sub firewall {
-    my $old_product_versions = is_sle('<15') || is_leap('<15.0');
+    my $old_product_versions      = is_sle('<15') || is_leap('<15.0');
     my $upgrade_from_susefirewall = is_upgrade && get_var('HDD_1') =~ /\b(1[123]|42)[\.-]/;
-    return ($old_product_versions || $upgrade_from_susefirewall) ? 'SuSEfirewall2' : 'firewalld';
+    return (($old_product_versions || $upgrade_from_susefirewall) && !is_tumbleweed) ? 'SuSEfirewall2' : 'firewalld';
 }
 
 =head2 remount_tmp_if_ro
 
-    remount_tmp_if_ro()
+ remount_tmp_if_ro();
 
 Mounts /tmp to shared memory if not possible to write to tmp.
 For example, save_y2logs creates temporary files there.
@@ -746,13 +1071,36 @@ sub remount_tmp_if_ro {
 
 =head2 select_serial_terminal
 
-    select_serial_terminal($root);
+ select_serial_terminal($root);
 
 Select most suitable text console with root user. The choice is made by
 BACKEND and other variables.
 
+Purpose of this wrapper is to avoid if/else conditions when selecting console.
+
 Optional C<root> parameter specifies, whether use root user (C<root>=1, also
 default when parameter not specified) or prefer non-root user if available.
+
+Variables affecting behavior:
+C<VIRTIO_CONSOLE>=0 disables virtio console (use {root,user}-console instead
+of the default {root-,}virtio-terminal)
+NOTE: virtio console is enabled by default (C<VIRTIO_CONSOLE>=1).
+For ppc64le it requires to call prepare_serial_console() to before first use
+(used in console/system_prepare and shutdown/cleanup_before_shutdown modules)
+and console=hvc0 in kernel parameters (add it to autoyast profile or update
+grub setup manually with add_grub_cmdline_settings()).
+
+C<SERIAL_CONSOLE>=0 disables serial console (use {root,user}-console instead
+of the default {root-,}sut-serial)
+NOTE: serial console is disabled by default on all but s390x machines
+(C<SERIAL_CONSOLE>=0), because it's not working yet on other machines
+(see poo#55985).
+For s390x it requires console=ttysclp0 in kernel parameters (add it to autoyast
+profile or update grub setup manually with add_grub_cmdline_settings()).
+
+On ikvm|ipmi|spvm|pvm_hmc it's expected, that use_ssh_serial_console() has been called
+(done via activate_console()) therefore SERIALDEV has been set and we can
+use root-ssh console directly.
 =cut
 sub select_serial_terminal {
     my ($self, $root) = @_;
@@ -767,21 +1115,25 @@ sub select_serial_terminal {
         } else {
             $console = $root ? 'root-virtio-terminal' : 'virtio-terminal';
         }
-    } elsif (get_var('S390_ZKVM')) {
-        $console = $root ? 'root-console' : 'user-console';
     } elsif ($backend eq 'svirt') {
-        $console = $root ? 'root-console' : 'user-console';
-    } elsif ($backend =~ /^(ikvm|ipmi|spvm)$/) {
+        if (check_var('SERIAL_CONSOLE', 0)) {
+            $console = $root ? 'root-console' : 'user-console';
+        } else {
+            $console = $root ? 'root-sut-serial' : 'sut-serial';
+        }
+    } elsif (has_serial_over_ssh) {
         $console = 'root-ssh';
+    } elsif (($backend eq 'generalhw' && !has_serial_over_ssh) || $backend eq 's390x') {
+        $console = $root ? 'root-console' : 'user-console';
     }
 
-    die "No support for backend '$backend', add it" if ($console eq '');
+    die "No support for backend '$backend', add it" if (!defined $console) || ($console eq '');
     select_console($console);
 }
 
 =head2 select_user_serial_terminal
 
-    select_user_serial_terminal();
+ select_user_serial_terminal();
 
 Select most suitable text console with non-root user.
 The choice is made by BACKEND and other variables.
@@ -790,15 +1142,43 @@ sub select_user_serial_terminal {
     select_serial_terminal(0);
 }
 
-# useful post_fail_hook for any module that calls wait_boot and x11_start_program
-##
-## we could use the same approach in all cases of boot/reboot/shutdown in case
-## of wait_boot, e.g. see `git grep -l reboot | xargs grep -L wait_boot`
+=head2 upload_coredumps
+
+ upload_coredumps();
+
+Upload all coredumps to logs
+=cut
+sub upload_coredumps {
+    my $res = script_run("coredumpctl --no-pager", timeout => 10);
+    if (!$res) {
+        record_info("COREDUMPS found", "we found coredumps on SUT, attemp to upload");
+        script_run("coredumpctl info --no-pager | tee coredump-info.log");
+        upload_logs("coredump-info.log");
+        my $basedir = '/var/lib/systemd/coredump/';
+        my @files   = split("\n", script_output("\\ls -1 $basedir | cat"));
+        foreach my $file (@files) {
+            upload_logs($basedir . $file);
+        }
+    }
+}
+
+=head2 post_fail_hook
+
+ post_fail_hook();
+
+When the test module fails, this method will be called.
+It will try to fetch some logs from the SUT.
+Test modules (or their intermediate base classes) may overwrite
+this method to export certain specific logfiles and call the
+base method using C<$self-E<gt>SUPER::post_fail_hook;> at the end.
+
+=cut
 sub post_fail_hook {
     my ($self) = @_;
-    return if testapi::is_serial_terminal();    # unless VIRTIO_CONSOLE=0 nothing below make sense
+    return if is_serial_terminal();    # unless VIRTIO_CONSOLE=0 nothing below make sense
 
     show_tasks_in_blocked_state;
+    return if (get_var('NOLOGS'));
 
     # just output error if selected program doesn't exist instead of collecting all logs
     # set current variables in x11_start_program
@@ -812,7 +1192,6 @@ sub post_fail_hook {
     }
 
     if (get_var('FULL_LVM_ENCRYPT') && get_var('LVM_THIN_LV')) {
-        my $self = shift;
         select_console 'root-console';
         my $lvmdump_regex = qr{/root/lvmdump-.*?-\d+\.tgz};
         my $out           = script_output 'lvmdump';
@@ -820,6 +1199,11 @@ sub post_fail_hook {
             upload_logs "$+{lvmdump_gzip}";
         }
         $self->save_and_upload_log('lvm dumpconfig', '/tmp/lvm_dumpconf.out');
+    }
+
+    if (get_var('COLLECT_COREDUMPS')) {
+        select_console 'root-console';
+        $self->upload_coredumps;
     }
 
     if ($self->{in_wait_boot}) {
@@ -843,6 +1227,12 @@ sub post_fail_hook {
     # the space prevents the esc from eating up the next alphanumerical
     # character typed into the console
     send_key 'spc';
+
+    $self->export_logs;
+}
+
+sub test_flags {
+    return get_var('PUBLIC_CLOUD') ? {no_rollback => 1} : {};
 }
 
 1;

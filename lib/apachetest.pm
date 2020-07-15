@@ -1,12 +1,17 @@
 # SUSE's Apache tests
 #
-# Copyright © 2016-2018 SUSE LLC
+# Copyright © 2016-2020 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
 # notice and this notice are preserved.  This file is offered as-is,
 # without any warranty.
 
+=head1 Apache tests
+
+Apache tests for various scenarios
+
+=cut
 package apachetest;
 
 use base Exporter;
@@ -17,17 +22,26 @@ use warnings;
 
 use testapi;
 use utils;
-use version_utils 'is_sle';
+use version_utils qw(is_sle check_version);
 
-our @EXPORT = qw(setup_apache2 setup_pgsqldb destroy_pgsqldb test_pgsql test_mysql);
-
+our @EXPORT = qw(setup_apache2 setup_pgsqldb destroy_pgsqldb test_pgsql test_mysql postgresql_cleanup);
 # Setup apache2 service in different mode: SSL, NSS, NSSFIPS, PHP7
 # Example: setup_apache2(mode => 'SSL');
+
+=head2 setup_apache2
+
+ setup_apache2(mode => $mode);
+
+Setup Apache service in different mode.
+Possible values for C<$mode> are: SSL, NSS, NSSFIPS and PHP7
+
+ setup_apache2(mode => 'SSL');
+
+=cut
 sub setup_apache2 {
-    my %args      = @_;
-    my $mode      = uc $args{mode} || "";
-    my $nsspasswd = "httptest";
-    my @packages  = qw(apache2);
+    my %args     = @_;
+    my $mode     = uc $args{mode} || "";
+    my @packages = qw(apache2);
 
     if (($mode eq "NSS") && get_var("FIPS")) {
         $mode = "NSSFIPS";
@@ -42,7 +56,7 @@ sub setup_apache2 {
     }
 
     # Make sure the packages are installed
-    zypper_call("in @packages");
+    zypper_call("--no-gpg-checks in @packages");
 
     # Enable php7
     if ($mode eq "PHP7") {
@@ -61,7 +75,8 @@ sub setup_apache2 {
     }
     if ($mode =~ m/SSL|NSS/) {
         assert_script_run "sed -i '/^APACHE_SERVER_FLAGS=/s/^/#/' /etc/sysconfig/apache2";
-        assert_script_run 'echo APACHE_SERVER_FLAGS="SSL" >> /etc/sysconfig/apache2';
+        assert_script_run 'echo APACHE_SERVER_FLAGS=\"SSL\" >> /etc/sysconfig/apache2';
+        assert_script_run "sed -i '/SSLCARevocationFile/a SSLFIPS on' /etc/apache2/ssl-global.conf" if get_var("FIPS_ENABLED");
     }
     # Create x509 certificate for this apache server
     if ($mode eq "SSL") {
@@ -99,6 +114,7 @@ sub setup_apache2 {
 
     # Start apache service
     systemctl 'stop apache2';
+    my $nsspasswd = (script_run('rpm -q apache2-mod_nss') == 0) ? script_output('awk \'/The database password is/ {print$5}\' /etc/apache2/mod_nss.d/install.log') : 'hTtp.Te5t';
     if ($mode eq "NSS") {
         assert_script_run "expect -c 'spawn systemctl start apache2; expect \"Enter SSL pass phrase for internal (NSS)\"; send \"$nsspasswd\\n\"; interact'";
     }
@@ -125,6 +141,14 @@ sub setup_apache2 {
         assert_script_run "curl --no-buffer http://localhost/index.php | grep \"\$(uname -s -n -r -v -m)\"";
     }
 }
+
+=head2 setup_pgsqldb
+
+ setup_pgsqldb();
+
+Set up a postgres data base
+
+=cut
 sub setup_pgsqldb {
     # without changing current working directory we get:
     # 'could not change directory to "/root": Permission denied'
@@ -138,14 +162,51 @@ sub setup_pgsqldb {
     assert_script_run 'popd';    # back to previous directory
 }
 
+=head2 destroy_pgsqldb
+
+ destroy_pgsqldb();
+
+Destroy a postgres data base
+
+=cut
 sub destroy_pgsqldb {
     assert_script_run 'pushd /tmp';
 
-    assert_script_run "sudo -u postgres dropdb openQAdb";
+    assert_script_run "sudo -u postgres dropdb --if-exists dvdrental";
+    assert_script_run "sudo -u postgres dropdb --if-exists openQAdb";
 
     assert_script_run 'popd';    # back to previous directory
 }
 
+=head2 test_pgsqldb
+
+ test_pgsqldb();
+
+Set up a postgres database and configure for:
+
+=over
+
+=item * PHP can access PostgreSQL by using password authentication.
+
+=item * Comment out default configuration.
+
+=item * Allow postgres to access the database with password authentication
+
+=item * Configure the PHP code to read table 'test' from the 'openQAdb' database (created in 'console/postgresql...' test) and insert a new element into the same table
+
+=item * Access the website and verify that it can read the database
+
+=item * Verify that PHP successfully wrote the element in the database
+ 
+=item * Add sudo rights to switch postgresql version and run script to determine oldest and latest version
+
+=item * Upgrade db from oldest version to latest version
+
+=item * Verify enties from imported dvdrental db before and after dump and restore
+
+=back
+
+=cut
 sub test_pgsql {
     # configuration so that PHP can access PostgreSQL
     # setup password
@@ -198,9 +259,13 @@ elif [[ $(echo $PG_VER|grep 10) ]]; then
     export PG_OLDEST='postgresql10'
 elif [[ $(echo $PG_VER|grep 11) ]]; then
     export PG_OLDEST='postgresql11'
+elif [[ $(echo $PG_VER|grep 12) ]]; then
+    export PG_OLDEST='postgresql12'
 fi
 echo PG_OLDEST=/usr/lib/$PG_OLDEST >/tmp/pg_versions
-if [[ $(echo $PG_VER|grep 11) ]]; then
+if [[ $(echo $PG_VER|grep 12) ]]; then
+    export PG_LATEST='postgresql12'
+elif [[ $(echo $PG_VER|grep 11) ]]; then
     export PG_LATEST='postgresql11'
 elif [[ $(echo $PG_VER|grep 10) ]]; then
     export PG_LATEST='postgresql10'
@@ -222,7 +287,7 @@ EOF
         assert_script_run 'sudo update-alternatives --set postgresql $PG_LATEST';
         assert_script_run 'initdb -D /var/lib/pgsql/data2';
         assert_script_run 'pg_upgrade -b $PG_OLDEST/bin/ -B $PG_LATEST/bin/ -d /tmp/psql -D /var/lib/pgsql/data2';
-        assert_script_run 'pg_ctl -D /var/lib/pgsql/data start';
+        assert_script_run 'pg_ctl -D /var/lib/pgsql/data2 start';
         assert_script_run './analyze_new_cluster.sh';
         assert_script_run './delete_old_cluster.sh';
     }
@@ -233,7 +298,7 @@ EOF
     assert_script_run 'unzip dvdrental.zip';
     assert_script_run 'p -c "CREATE DATABASE dvdrental"';
     assert_script_run 'psql -a -E -c "\l"|grep dvdrental';
-    assert_script_run 'pg_restore -d dvdrental -1 dvdrental.tar';
+    assert_script_run 'pg_restore --clean --if-exists -d dvdrental -1 dvdrental.tar';    # Use '--clean --if-exists' flags for poo#49187
     assert_script_run 'p -d dvdrental -c "\dt"';
     assert_script_run 'p -d dvdrental -c "SELECT * FROM customer"|grep Davidson';
     assert_script_run 'p -d dvdrental -c "INSERT INTO customer VALUES (\'600\', \'1\', \'openQA\', \'openQA\', \'openqa@openqa.com\', \'1\')"';
@@ -241,17 +306,37 @@ EOF
     assert_script_run 'dropdb dvdrental';
     assert_script_run 'p -c "CREATE DATABASE dvdrental"';
     assert_script_run 'p -c "\l"|grep dvdrental';
-    assert_script_run 'pg_restore -d dvdrental -1 dvdrental_dump.tar';
+    # Use '--clean --if-exists' flags for poo#49187
+    assert_script_run 'pg_restore --clean --if-exists -d dvdrental -1 dvdrental_dump.tar';
     # check if db contains old and new table row
     assert_script_run 'p -d dvdrental -c "SELECT * FROM customer WHERE first_name = \'openQA\'"|grep openQA';
     assert_script_run 'p -d dvdrental -c "SELECT * FROM customer WHERE last_name = \'Davidson\'"|grep Davidson';
     type_string "exit\n", wait_still_screen => 1;
 }
 
+=head2 test_mysql
+
+ test_mysql();
+
+Create the 'openQAdb' database with table 'test' and insert one element
+
+=cut
 sub test_mysql {
     # create the 'openQAdb' database with table 'test' and insert one element 'can php read this?'
-    assert_script_run
-qq{mysql -u root -e "CREATE DATABASE openQAdb; USE openQAdb; CREATE TABLE test (id int NOT NULL AUTO_INCREMENT, entry varchar(255) NOT NULL, PRIMARY KEY(id)); INSERT INTO test (entry) VALUE ('can you read this?');"};
+    my $setup_openQAdb = "CREATE DATABASE openQAdb; USE openQAdb;
+    CREATE TABLE test (id int NOT NULL AUTO_INCREMENT, entry varchar(255) NOT NULL, PRIMARY KEY(id));
+    INSERT INTO test (entry) VALUE ('can you read this?');";
+    assert_script_run qq{mysql -u root -e "$setup_openQAdb"};
+
+    my $mysql_version = script_output qq{mysql -sN -u root -e "SELECT VERSION();"};
+    if (check_version('>=10.4', $mysql_version)) {
+        # MariaDB changed the default authentication method since version 10.4
+        # https://mariadb.org/authentication-in-mariadb-10-4/
+        # https://bugzilla.suse.com/show_bug.cgi?id=1165151
+        my $mysql_root_password = "ALTER USER root\@localhost IDENTIFIED VIA mysql_native_password USING PASSWORD(\'\');";
+        assert_script_run qq{mysql -u root -e "$mysql_root_password"};
+    }
+    record_info($mysql_version);
 
     # configure the PHP code that:
     #  1. reads table 'test' from the 'openQAdb' database
@@ -259,13 +344,26 @@ qq{mysql -u root -e "CREATE DATABASE openQAdb; USE openQAdb; CREATE TABLE test (
     assert_script_run "curl " . data_url('console/test_mysql_connector.php') . " -o /srv/www/htdocs/test_mysql_connector.php";
     systemctl 'restart apache2.service';
 
-    # access the website and verify that it can read the database
-    assert_script_run "curl --no-buffer http://localhost/test_mysql_connector.php | grep 'can you read this?'";
+    # Access the website and verify that it can read the database
+    # using validate_script_output instead of script_run + grep, we get necessary logs in case of a problem with the
+    # mariadb connection (Permission denied here, means that default (empty) root password did not work
+    validate_script_output "curl --no-buffer http://localhost/test_mysql_connector.php", qr/can you read this\?/;
 
     # verify that PHP successfully wrote the element in the database
-    assert_script_run "mysql -u root -e 'USE openQAdb; SELECT * FROM test;' | grep 'can php write this?'";
+    validate_script_output "mysql -u root  -e 'USE openQAdb; SELECT * FROM test;'", qr/can php write this\?/;
 
     assert_script_run qq{mysql -u root -e "DROP DATABASE openQAdb;"};
+}
+
+# poo#62000
+sub postgresql_cleanup {
+    select_console 'root-console';
+    # Clean up
+    systemctl 'stop postgresql';
+    systemctl 'disable postgresql';
+    systemctl 'is-active postgresql', expect_false => 1;
+    assert_script_run('kill -s KILL $(ps -u postgres -o pid=)') unless script_run('ps -u postgres -o pid=');
+    zypper_call "rm postgresql";
 }
 
 1;

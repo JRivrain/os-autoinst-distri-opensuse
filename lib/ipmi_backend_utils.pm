@@ -21,7 +21,7 @@ use version_utils qw(is_storage_ng is_sle);
 use utils;
 use power_action_utils 'prepare_system_shutdown';
 
-our @EXPORT = qw(set_serial_console_on_vh switch_from_ssh_to_sol_console set_pxe_efiboot boot_local_disk_arm_huawei);
+our @EXPORT = qw(set_serial_console_on_vh switch_from_ssh_to_sol_console adjust_for_ipmi_xen set_pxe_efiboot boot_local_disk_arm_huawei);
 
 #With the new ipmi backend, we only use the root-ssh console when the SUT boot up,
 #and no longer setup the real serial console for either kvm or xen.
@@ -67,7 +67,7 @@ sub get_dom0_serialdev {
         }
     }
     else {
-        $dom0_serialdev = 'ttyS1';
+        $dom0_serialdev = get_var("LINUX_CONSOLE_OVERRIDE", "ttyS1");
     }
 
     if (match_has_tag("grub1")) {
@@ -90,60 +90,68 @@ sub setup_console_in_grub {
 
     #set grub config file
     my $grub_default_file = "${root_dir}/etc/default/grub";
-    my $grub_cfg_file;
-    if ($grub_ver eq "grub2") {
-        $grub_cfg_file = "${root_dir}/boot/grub2/grub.cfg";
-    }
-    elsif ($grub_ver eq "grub1") {
-        $grub_cfg_file = "${root_dir}/boot/grub/menu.lst";
-    }
-    else {
-        die "The grub version is not supported!";
-    }
-
-    #setup serial console for xen
-    my $cmd;
+    my $grub_cfg_file     = "";
+    my $com_settings      = "";
+    my $bootmethod        = "";
+    my $search_pattern    = "";
+    my $cmd               = "";
     if ($grub_ver eq "grub2") {
         #grub2
+        $grub_cfg_file = "${root_dir}/boot/grub2/grub.cfg";
         if (${virt_type} eq "xen") {
-            my $com_settings = get_var('IPMI_CONSOLE') ? "com2=" . get_var('IPMI_CONSOLE') : "";
-            #bsc#1107572 workaround(Comment9 "This dom0 memory amount works well with hosts having 4 to 8 Gigs of RAM.
-            #With host containing larger amounts of memory, you may want to increase this to something larger.")
-            #dom0_mem=1024M,max:1024M
+            $com_settings   = get_var('IPMI_CONSOLE') ? "com2=" . get_var('IPMI_CONSOLE') : "";
+            $bootmethod     = "module";
+            $search_pattern = "vmlinuz";
+
+            # autoballoning is disabled since sles15sp1 beta2. we use default dom0_ram which is '10% of total ram + 1G'
+            # while for older release, bsc#1107572 "This dom0 memory amount works well with hosts having 4 to 8 Gigs of RAM"
+            # considering of one SUT in OSD with 4G ram only, we set dom0_mem=2G
+            my $dom0_mem_options = "";
+            if (is_sle('<=12-SP4') || is_sle('=15')) {
+                $dom0_mem_options = "dom0_mem=2048M,max:2048M";
+            }
             $cmd
-              = "cp $grub_cfg_file ${grub_cfg_file}.org "
-              . "\&\& sed -ri '/(multiboot|module\\s*.*vmlinuz)/ "
+              = "sed -ri '/multiboot/ "
               . "{s/(console|loglevel|log_lvl|guest_loglvl)=[^ ]*//g; "
-              . "/multiboot/ s/\$/ dom0_mem=1024M,max:1024M console=com2,115200 log_lvl=all guest_loglvl=all sync_console $com_settings/; "
-              . "/module\\s*.*vmlinuz/ s/\$/ console=$ipmi_console,115200 console=tty loglevel=5/;}; "
-              . "s/timeout=-{0,1}[0-9]{1,}/timeout=30/g;"
+              . "/multiboot/ s/\$/ $dom0_mem_options console=com2,115200 log_lvl=all guest_loglvl=all sync_console $com_settings/;}; "
               . "' $grub_cfg_file";
             assert_script_run($cmd);
             save_screenshot;
-            $cmd = "sed -rn '/(multiboot|module\\s*.*vmlinuz|timeout=)/p' $grub_cfg_file";
-            assert_script_run($cmd);
-            save_screenshot;
-        } elsif (${virt_type} eq "kvm") {
-            $cmd
-              = "cp $grub_cfg_file ${grub_cfg_file}.org "
-              . "\&\& sed -ri 's/timeout=-{0,1}[0-9]{1,}/timeout=30/g' $grub_cfg_file "
-              . "\&\& sed -ri 's/^terminal.*\$/terminal_input console serial\\nterminal_output console serial\\nterminal console serial/g' $grub_cfg_file "
-              . "\&\& cat $grub_default_file $grub_cfg_file";
-            assert_script_run($cmd);
-            save_screenshot;
-        } else { die "Host Hypervisor is not xen or kvm"; }
+        }
+        elsif (${virt_type} eq "kvm") {
+            $bootmethod     = "linux";
+            $search_pattern = "boot";
+        }
+        else {
+            die "Host Hypervisor is not xen or kvm";
+        }
 
-
-        $cmd = "sed -ri 's/^terminal.*\$/terminal_input console serial\\nterminal_output console serial\\nterminal console serial/g' $grub_cfg_file";
+        $cmd
+          = "cp $grub_cfg_file ${grub_cfg_file}.org "
+          . "\&\& sed -ri '/($bootmethod\\s*.*$search_pattern)/ "
+          . "{s/(console|loglevel|log_lvl|guest_loglvl)=[^ ]*//g; "
+          . "/$bootmethod\\s*.*$search_pattern/ s/\$/ console=$ipmi_console,115200 console=tty loglevel=5/;}; "
+          . "s/timeout=-{0,1}[0-9]{1,}/timeout=30/g;"
+          . "' $grub_cfg_file";
         assert_script_run($cmd);
-        $cmd = "cat $grub_default_file $grub_cfg_file";
+        save_screenshot;
+        $cmd = "sed -rn '/(multiboot|$bootmethod\\s*.*$search_pattern|timeout=)/p' $grub_cfg_file";
+        assert_script_run($cmd);
+        save_screenshot;
+
+        if (!script_run('grep HPE /sys/class/dmi/id/board_vendor') == 0) {
+            $cmd = "sed -ri 's/^terminal.*\$/terminal_input console serial\\nterminal_output console serial\\nterminal console serial/g' $grub_cfg_file";
+            assert_script_run($cmd);
+        }
+        $cmd = "cat $grub_cfg_file $grub_default_file";
         assert_script_run($cmd);
         save_screenshot;
         upload_logs($grub_default_file);
     }
     elsif ($grub_ver eq "grub1") {
+        $grub_cfg_file = "${root_dir}/boot/grub/menu.lst";
         $cmd
-          = "cp $grub_cfg_file ${grub_cfg_file}.org \&\&  sed -i 's/timeout=-{0,1}[0-9]{1,}/timeout=30/g; /module \\\/boot\\\/vmlinuz/{s/console=.*,115200/console=$ipmi_console,115200/g;}' $grub_cfg_file";
+          = "cp $grub_cfg_file ${grub_cfg_file}.org \&\&  sed -i 's/timeout=-{0,1}[0-9]{1,}/timeout=30/g; /module \\\/boot\\\/vmlinuz/{s/console=.*,115200/console=$ipmi_console,115200/g;}; /kernel .*xen/{s/\$/ dom0_mem=2048M,max:2048M/;}' $grub_cfg_file";
         assert_script_run($cmd);
         save_screenshot;
         $cmd = "sed -rn '/module \\\/boot\\\/vmlinuz/p' $grub_cfg_file";
@@ -205,15 +213,55 @@ sub get_installation_partition {
     return $partition;
 }
 
+
+# This works only on SLES 12+
+sub adjust_for_ipmi_xen {
+    my ($root_prefix) = @_;
+    $root_prefix = "/" if (!defined $root_prefix) || ($root_prefix eq "");
+    my $installation_disk = "";
+
+    if ($root_prefix ne "/") {
+        $installation_disk = get_installation_partition;
+        assert_script_run("cd /");
+        mount_installation_disk("$installation_disk", "$root_prefix");
+    }
+
+    assert_script_run('mount --rbind /proc /mnt/proc');
+    assert_script_run('mount --rbind /sys /mnt/sys');
+    assert_script_run('mount --rbind /dev /mnt/dev');
+    type_string("chroot /mnt\n");
+    wait_still_screen;
+
+    # Mount Btrfs sub-volumes
+    assert_script_run('mount -a');
+
+    assert_script_run ". /etc/default/grub";
+    my $xen_dom0_mem = get_var('XEN_DOM0_MEM', '4096M');
+    assert_script_run "sed -i '/GRUB_CMDLINE_XEN_DEFAULT/c\\GRUB_CMDLINE_XEN_DEFAULT=\"\$GRUB_CMDLINE_XEN_DEFAULT dom0_mem=$xen_dom0_mem\"' /etc/default/grub";
+    assert_script_run "sed -i '/GRUB_DEFAULT/c\\GRUB_DEFAULT=\"2\"' /etc/default/grub";
+    assert_script_run "cat /etc/default/grub";
+    assert_script_run "grub2-mkconfig -o /boot/grub2/grub.cfg";
+
+    # Exit chroot
+    type_string "exit\n";
+    wait_still_screen;
+
+    #cleanup mount
+    if ($root_prefix ne "/") {
+        assert_script_run("cd /");
+        umount_installation_disk("$root_prefix");
+    }
+}
+
 sub set_pxe_efiboot {
     my ($root_prefix) = @_;
     $root_prefix = "/" if (!defined $root_prefix) || ($root_prefix eq "");
     my $installation_disk = "";
 
     if ($root_prefix ne "/") {
-        $installation_disk = &get_installation_partition;
+        $installation_disk = get_installation_partition;
         assert_script_run("cd /");
-        &mount_installation_disk("$installation_disk", "$root_prefix");
+        mount_installation_disk("$installation_disk", "$root_prefix");
     }
 
     my $wait_script    = "30";
@@ -275,7 +323,7 @@ sub set_pxe_efiboot {
     #cleanup mount
     if ($root_prefix ne "/") {
         assert_script_run("cd /");
-        &umount_installation_disk("$root_prefix");
+        umount_installation_disk("$root_prefix");
     }
 }
 
@@ -293,11 +341,11 @@ sub set_serial_console_on_vh {
         #when mount point is not empty, needs to mount installation disk
         if ($installation_disk eq "") {
             #search for the real installation partition on the first disk, which is selected by yast in ipmi installation
-            $installation_disk = &get_installation_partition;
+            $installation_disk = get_installation_partition;
         }
         #mount partition
         assert_script_run("cd /");
-        &mount_installation_disk("$installation_disk", "$mount_point");
+        mount_installation_disk("$installation_disk", "$mount_point");
         $root_dir = $mount_point;
     }
     else {
@@ -305,14 +353,14 @@ sub set_serial_console_on_vh {
     }
 
     #set up xen serial console
-    my $ipmi_console = &get_dom0_serialdev("$root_dir");
-    if (${virt_type} eq "xen" || ${virt_type} eq "kvm") { &setup_console_in_grub($ipmi_console, $root_dir, $virt_type); }
-    else                                                { die "Host Hypervisor is not xen or kvm"; }
+    my $ipmi_console = get_dom0_serialdev("$root_dir");
+    if   (${virt_type} eq "xen" || ${virt_type} eq "kvm") { setup_console_in_grub($ipmi_console, $root_dir, $virt_type); }
+    else                                                  { die "Host Hypervisor is not xen or kvm"; }
 
     #cleanup mount
     if ($mount_point ne "") {
         assert_script_run("cd /");
-        &umount_installation_disk("$mount_point");
+        umount_installation_disk("$mount_point");
     }
 
 }

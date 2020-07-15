@@ -14,11 +14,12 @@
 #    while launching atm.
 # Maintainer: Zaoliang Luo <zluo@suse.com>
 
-use base "y2x11test";
+use base "y2_module_guitest";
 use strict;
 use warnings;
 use testapi;
-use y2_common 'is_network_manager_default';
+use y2_module_basetest 'is_network_manager_default';
+use version_utils 'is_sle';
 
 sub run {
     my $self = shift;
@@ -55,11 +56,17 @@ sub run {
         type_string(get_var('DISTRI') . '-host') if get_var("DISTRI") =~ /(sle|opensuse)/;
     }
     # Overview tab
-    send_key $cmd{overview_tab};
-    assert_screen 'yast2-network-settings_overview';
+    # When controlled by NM we cannot edit anything in the UI and in latest version
+    # it's not even possible to open the tab and warning will be shown, so skip this tab completely
     unless (is_network_manager_default) {
+        send_key $cmd{overview_tab};
+        assert_screen 'yast2-network-settings_overview';
         send_key $cmd{add_device};
-        assert_and_click 'yast2-network-settings_overview_hardware-dialog_device-type';
+        # Older than 15-SP2 versions require two steps to select device type: expand the list and then select the option.
+        # On 15-SP2 it is a list of radio buttons, so only one step with selecting the radio is needed.
+        if (is_sle('<15-SP2')) {
+            assert_and_click 'yast2-network-settings_overview_hardware-dialog_device-type';
+        }
         assert_and_click 'yast2-network-settings_overview_hardware-dialog_device-type_bridge';
         send_key $cmd{next};
         assert_screen 'yast2-network-settings_overview_network-card-setup';

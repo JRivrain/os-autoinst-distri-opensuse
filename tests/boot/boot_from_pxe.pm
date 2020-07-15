@@ -1,4 +1,3 @@
-# SUSE's openQA tests
 #
 # Copyright © 2012-2019 SUSE LLC
 #
@@ -21,6 +20,8 @@ use testapi;
 use bootloader_setup qw(bootmenu_default_params specific_bootmenu_params);
 use registration 'registration_bootloader_cmdline';
 use utils 'type_string_slow';
+use Utils::Backends 'is_remote_backend';
+use Utils::Architectures 'is_aarch64';
 
 sub run {
     my ($image_path, $image_name, $cmdline);
@@ -60,8 +61,18 @@ sub run {
 
         my $openqa_url = get_required_var('OPENQA_URL');
         $openqa_url = 'http://' . $openqa_url unless $openqa_url =~ /http:\/\//;
-        my $repo = $openqa_url . "/assets/repo/${image_name}";
-        send_key_until_needlematch [qw(qa-net-boot orthos-grub-boot)], 'esc', 8, 3;
+        my $repo        = $openqa_url . "/assets/repo/${image_name}";
+        my $sut_fqdn    = get_var('SUT_IP', 'nosutip');
+        my $sut_allowed = qr/(arch\.suse\.de|qa2\.suse\.asia)/im;
+        my $key_used    = '';
+        if (is_remote_backend && is_aarch64 && ($sut_fqdn =~ $sut_allowed)) {
+            $key_used = 'c';
+            send_key 'down';
+        }
+        else {
+            $key_used = 'esc';
+        }
+        send_key_until_needlematch [qw(qa-net-boot orthos-grub-boot)], $key_used, 8, 3;
         if (match_has_tag("qa-net-boot")) {
             #Nuremberg
             my $path_prefix = "/mnt/openqa/repo";
@@ -77,7 +88,7 @@ sub run {
         }
 
         #IPMI Backend
-        $image_path .= "?device=$interface " if check_var('BACKEND', 'ipmi');
+        $image_path .= "?device=$interface " if (check_var('BACKEND', 'ipmi') && !get_var('SUT_NETDEVICE_SKIPPED'));
     }
     elsif (match_has_tag('prague-pxe-menu')) {
         send_key_until_needlematch 'qa-net-boot', 'esc', 8, 3;
@@ -87,8 +98,8 @@ sub run {
             send_key 'tab';
         }
         else {
-            my $device = check_var('BACKEND', 'ipmi') ? "?device=$interface" : '';
-            my $release = get_var('BETA') ? 'LATEST' : 'GM';
+            my $device  = (check_var('BACKEND', 'ipmi') && !get_var('SUT_NETDEVICE_SKIPPED')) ? "?device=$interface" : '';
+            my $release = get_var('BETA')                                                     ? 'LATEST'             : 'GM';
             $image_name = get_var('ISO') =~ s/.*\/(.*)-DVD-${arch}-.*\.iso/$1-$release/r;
             $image_name = get_var('PXE_PRODUCT_NAME') if get_var('PXE_PRODUCT_NAME');
             $image_path = "/mounts/dist/install/SLP/${image_name}/${arch}/DVD1/boot/${arch}/loader/linux ";
@@ -102,9 +113,9 @@ sub run {
         send_key "tab";
     }
     if (check_var('BACKEND', 'ipmi')) {
-        $image_path .= "ipv6.disable=1 " if get_var('LINUX_BOOT_IPV6_DISABLE');
-        $image_path .= "ifcfg=$interface=dhcp4 " unless get_var('NETWORK_INIT_PARAM');
-        $image_path .= 'plymouth.enable=0 ';
+        $image_path .= " ipv6.disable=1 "         if get_var('LINUX_BOOT_IPV6_DISABLE');
+        $image_path .= " ifcfg=$interface=dhcp4 " if (!get_var('NETWORK_INIT_PARAM') && !get_var('SUT_NETDEVICE_SKIPPED'));
+        $image_path .= ' plymouth.enable=0 ';
     }
     # Execute installation command on pxe management cmd console
     type_string_slow ${image_path} . " ";
@@ -131,30 +142,40 @@ sub run {
 
     specific_bootmenu_params;
 
+    # try to avoid blue screen issue on osd ipmi tests
+    # local test passes, if validated on osd, will switch on to all ipmi tests
+    if (check_var('BACKEND', 'ipmi') && check_var('VIDEOMODE', 'text') && check_var('VIRT_AUTOTEST', 1)) {
+        type_string_slow(" vt.color=0x07 ");
+    }
+
     send_key 'ret';
     save_screenshot;
 
     if (check_var('BACKEND', 'ipmi') && !get_var('AUTOYAST')) {
-        my $ssh_vnc_wait_time = 300;
+        my $ssh_vnc_wait_time = 420;
         my $ssh_vnc_tag       = eval { check_var('VIDEOMODE', 'text') ? 'sshd' : 'vnc' } . '-server-started';
         my @tags              = ($ssh_vnc_tag, 'orthos-grub-boot-linux');
-        assert_screen \@tags, $ssh_vnc_wait_time;
-        save_screenshot;
-        sleep 2;
 
-        if (match_has_tag("orthos-grub-boot-linux")) {
-            my $image_name = eval { check_var("INSTALL_TO_OTHERS", 1) ? get_var("REPO_0_TO_INSTALL") : get_var("REPO_0") };
-            my $args       = "initrd auto/openqa/repo/${image_name}/boot/${arch}/initrd";
-            wait_still_screen 5;
-            type_string $args;
-            send_key 'ret';
-            assert_screen 'orthos-grub-boot-initrd', $ssh_vnc_wait_time;
-            $args = "boot";
-            type_string $args;
-            send_key "ret";
-            assert_screen $ssh_vnc_tag, $ssh_vnc_wait_time;
+        # Proceed if the 'installation' console is ready
+        # otherwise the 'sol' console may be just freezed
+        if (check_screen(\@tags, $ssh_vnc_wait_time)) {
+            save_screenshot;
+            sleep 2;
+
+            if (match_has_tag("orthos-grub-boot-linux")) {
+                my $image_name = eval { check_var("INSTALL_TO_OTHERS", 1) ? get_var("REPO_0_TO_INSTALL") : get_var("REPO_0") };
+                my $args       = "initrd auto/openqa/repo/${image_name}/boot/${arch}/initrd";
+                wait_still_screen 5;
+                type_string $args;
+                send_key 'ret';
+                assert_screen 'orthos-grub-boot-initrd', $ssh_vnc_wait_time;
+                $args = "boot";
+                type_string $args;
+                send_key "ret";
+                assert_screen $ssh_vnc_tag, $ssh_vnc_wait_time;
+            }
         }
-
+        save_screenshot;
         select_console 'installation';
         save_screenshot;
         # We have textmode installation via ssh and the default vnc installation so far
@@ -165,5 +186,20 @@ sub run {
         wait_still_screen;
     }
 }
+
+sub post_fail_hook {
+    my $self = shift;
+
+    if (check_var('BACKEND', 'ipmi') && check_var('VIDEOMODE', 'text')) {
+        select_console 'log-console';
+        save_screenshot;
+        script_run "save_y2logs /tmp/y2logs_clone.tar.bz2";
+        upload_logs "/tmp/y2logs_clone.tar.bz2";
+        save_screenshot;
+    }
+
+    $self->SUPER::post_fail_hook();
+}
+
 
 1;

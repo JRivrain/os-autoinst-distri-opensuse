@@ -9,11 +9,14 @@
 
 # Summary: Disable grub timeout from the Installer
 #   in order to ensure tests do not skip over it.
+# - Enter bootloader configuration option during install (unless is update)
+# - Set grub timeout to "-1" (60 if older than sle12sp1)
+# - Save screenshot
 # Maintainer: Joaquín Rivera <jeriveramoya@suse.com>
 
 use strict;
 use warnings;
-use base "y2logsstep";
+use base 'y2_installbase';
 use testapi;
 use utils;
 use version_utils qw(is_sle is_leap is_upgrade);
@@ -28,7 +31,7 @@ sub run {
         # Select section booting on Installation Settings overview on text mode
         send_key $cmd{change};
         assert_screen 'inst-overview-options';
-        send_key 'alt-b';
+        is_upgrade() ? send_key 'alt-t' : send_key 'alt-b';
     }
     else {
         # Select section booting on Installation Settings overview (video mode)
@@ -62,6 +65,7 @@ sub run {
     my $timeout = "-1";
     # SLE-12 GA only accepts positive integers in range [0,300]
     $timeout = "60" if is_sle('<12-SP1');
+    $timeout = "90" if (get_var("REGRESSION", '') =~ /xen|kvm|qemu/);
     type_string $timeout;
 
     # ncurses uses blocking modal dialog, so press return is needed

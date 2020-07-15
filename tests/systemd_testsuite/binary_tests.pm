@@ -19,15 +19,15 @@ sub run {
     my ($self) = @_;
     $self->testsuiteinstall;
 
-    #run binary tests
-    assert_script_run 'cd /var/opt/systemd-tests';
-    assert_script_run './run-tests.sh | tee /tmp/testsuite.log', 600;
-    assert_screen("systemd-testsuite-binary-tests-summary");
+    # run binary tests
+    assert_script_run('cd /var/opt/systemd-tests');
+    validate_script_output('./run-tests.sh | tee /tmp/testsuite.log', sub { m/# FAIL:\s*0/ }, timeout => 600);
+    save_screenshot;
+    script_run 'clear';
 }
 
 sub test_flags {
-    return {milestone => 1};
+    return {fatal => 1, milestone => 1};
 }
-
 
 1;

@@ -12,7 +12,8 @@
 
 use strict;
 use warnings;
-use base "console_yasttest";
+use base "y2_module_consoletest";
+
 use testapi;
 use utils qw(type_string_slow zypper_call systemctl);
 use version_utils qw(is_sle is_leap);
@@ -32,11 +33,6 @@ sub run {
     # if support-server is used
     my $ntp_server = check_var('USE_SUPPORT_SERVER', 1) ? 'ns' : '0.opensuse.pool.ntp.org';
 
-    # test often fails due to info kernel messages disrupting screen
-    # decrease logging level to warning to avoid this
-    assert_script_run 'dmesg -n 4';
-    record_soft_failure 'bsc#1011815';
-
     # check network at first
     assert_script_run('if ! systemctl -q is-active network; then systemctl -q start network; fi');
 
@@ -44,7 +40,7 @@ sub run {
     zypper_call("in yast2-ntp-client", timeout => 180);
 
     # start NTP configuration
-    my $module_name = y2logsstep::yast2_console_exec(yast2_module => 'ntp-client');
+    my $module_name = y2_module_consoletest::yast2_console_exec(yast2_module => 'ntp-client');
 
     # check Advanced NTP Configuration is opened
     assert_screen([qw(yast2_ntp-client_configuration yast2_ntp-needs_install)], 90);
@@ -91,8 +87,6 @@ sub run {
 
     # select type of synchronization: server, then go next
     if ($is_chronyd) {
-        # we can't select public server (yet!), so we manually enter it
-        record_soft_failure 'bsc#1073326';
         type_string "$ntp_server";
     }
     else {
@@ -128,10 +122,7 @@ sub run {
 
     # run test
     send_key 'alt-t';
-    assert_screen ['bsc#1074726', 'yast2_ntp-client_public_ntp_test'];
-
-    # If NTP server test failed, it's certainly because bsc#1074726 bug
-    record_soft_failure 'bsc#1074726' if (match_has_tag 'bsc#1074726');
+    assert_screen 'yast2_ntp-client_public_ntp_test';
 
     # close it with OK
     my $ntp_client_needle = check_var('USE_SUPPORT_SERVER', 1) ? 'support_server' : 'public';

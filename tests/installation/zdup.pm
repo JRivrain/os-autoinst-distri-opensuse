@@ -1,7 +1,7 @@
 # SUSE's openQA tests
 #
 # Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2016 SUSE LLC
+# Copyright © 2012-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -16,7 +16,7 @@ use base "installbasetest";
 use strict;
 use warnings;
 use testapi;
-use utils 'OPENQA_FTP_URL';
+use utils qw(OPENQA_FTP_URL zypper_call);
 
 sub run {
     my $self = shift;
@@ -38,11 +38,9 @@ sub run {
     script_run "ip addr show";
     save_screenshot;
 
-    # before disable we need to have cdrkit installed to get proper iso appid
-    script_run "zypper -n in cdrkit-cdrtools-compat";
     # Disable all repos, so we do not need to remove one by one
     # beware PackageKit!
-    script_run("zypper modifyrepo --all --disable | tee /dev/$serialdev", 0);
+    script_run("zypper -n mr --all --disable | tee /dev/$serialdev", 0);
     my $out = wait_serial([$zypper_packagekit, $zypper_repo_disabled], 120);
     while ($out) {
         if ($out =~ $zypper_packagekit || $out =~ $zypper_packagekit_again) {
@@ -92,24 +90,24 @@ sub run {
             # get all attached ISOs including addons' as zdup dup repos
             my $srx = script_output("ls -al /dev/disk/by-label | grep -E /sr[0-9]+ | wc -l");
             for my $n (0 .. $srx - 1) {
-                $defaultrepo .= "dvd:/?devices=\${dev:-/dev/sr$n}+";
+                $defaultrepo .= "dvd:/?devices=\${dev:-/dev/sr$n},";
             }
         }
     }
 
     my $nr = 1;
-    foreach my $r (split(/\+/, get_var("ZDUPREPOS", $defaultrepo))) {
-        assert_script_run("zypper -n addrepo \"$r\" repo$nr");
+    foreach my $r (split(/,/, get_var('ZDUPREPOS', $defaultrepo))) {
+        zypper_call("--no-gpg-checks ar \"$r\" repo$nr");
         $nr++;
     }
-    assert_script_run("zypper -n refresh", 240);
+    zypper_call '--gpg-auto-import-keys ref';
 
     script_run("(zypper dup -l;echo ZYPPER-DONE) | tee /dev/$serialdev", 0);
 
     $out = wait_serial([$zypper_dup_continue, $zypper_dup_conflict, $zypper_dup_error], 240);
     while ($out) {
         if ($out =~ $zypper_dup_conflict) {
-            if (get_var("WORKAROUND_DEPS")) {
+            if (check_var("WORKAROUND_DEPS", '1')) {
                 record_info 'workaround dependencies';
                 send_key '1';
                 send_key 'ret';
@@ -177,10 +175,6 @@ sub run {
     }
 
     assert_screen "zypper-dup-finish";
-}
-
-sub test_flags {
-    return {fatal => 1};
 }
 
 1;

@@ -10,13 +10,13 @@
 # Summary: yast2 lan hostname via DHCP test https://bugzilla.suse.com/show_bug.cgi?id=984890
 # Maintainer: Jozef Pupava <jpupava@suse.com>
 
-use base "console_yasttest";
+use parent "y2_module_consoletest";
 use strict;
 use warnings;
 use testapi;
 use utils;
 use version_utils ':VERSION';
-use y2_common 'accept_warning_network_manager_default';
+
 
 sub hostname_via_dhcp {
     my $dhcp = shift;
@@ -25,10 +25,15 @@ sub hostname_via_dhcp {
     $cmd{hostname_dns_tab} = 'alt-s';
     $cmd{home}             = 'home';
     $cmd{spc}              = 'spc';
-
-    y2logsstep::yast2_console_exec(yast2_module => 'lan');
-    accept_warning_network_manager_default;
-    assert_screen 'yast2_lan';
+    y2_module_consoletest::yast2_console_exec(yast2_module => 'lan');
+    # 'Global Options' tab is opened after accepting the warning on the systems
+    # with Network Manager.
+    if (y2_module_basetest::is_network_manager_default) {
+        y2_module_basetest::accept_warning_network_manager_default;
+    }
+    else {
+        assert_screen 'yast2_lan';
+    }
 
     # Hostname/DNS tab
     send_key $cmd{hostname_dns_tab};
@@ -64,7 +69,7 @@ sub hostname_via_dhcp {
 
 sub run {
     select_console 'root-console';
-    assert_script_run 'zypper -n in yast2-network';    # make sure yast2 lan module installed
+    zypper_call 'in yast2-network';    # make sure yast2 lan module installed
     hostname_via_dhcp('no');
     hostname_via_dhcp('yes-any');
     hostname_via_dhcp('yes-eth0');

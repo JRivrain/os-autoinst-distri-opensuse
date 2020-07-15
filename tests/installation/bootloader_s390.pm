@@ -1,7 +1,7 @@
 # SUSE's openQA tests
 #
 # Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2017 SUSE LLC
+# Copyright © 2012-2020 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -26,6 +26,7 @@ use English;
 use bootloader_setup;
 use registration;
 use utils 'shorten_url';
+use version_utils qw(is_sle is_tumbleweed);
 
 # try to find the 2 longest lines that are below beyond the limit
 # collapsing the lines - we have a limit of 10 lines
@@ -81,6 +82,10 @@ sub prepare_parmfile {
     my $params = '';
     $params .= " " . get_var('S390_NETWORK_PARAMS');
     $params .= " " . get_var('EXTRABOOTPARAMS');
+    if ((is_sle('>=15-SP2') || is_tumbleweed()) && get_var('WORKAROUND_BUGS') =~ 'bsc1156047') {
+        $params .= ' hardened_usercopy=off hvc_iucv=8';
+        record_soft_failure('bsc#1156053 - hardened_usercopy=off to avoid "/dev/hvc0: cannot get controlling tty: Operation not permitted" (Kernel memory overwrite attempt detected to SLUB object - illegal operation)');
+    }
 
     $params .= remote_install_bootmenu_params;
 
@@ -107,9 +112,11 @@ sub prepare_parmfile {
     if (get_var('AUTOYAST')) {
         if (get_var('AUTOYAST_PREPARE_PROFILE')) {
             $params .= " autoyast=" . shorten_url(get_var('AUTOYAST'));
+            set_var('AUTOYAST', shorten_url(get_var('AUTOYAST')));
         }
         else {
             $params .= " autoyast=" . shorten_url(data_url(get_var('AUTOYAST')));
+            set_var('AUTOYAST', shorten_url(data_url(get_var('AUTOYAST'))));
         }
     }
     return split_lines($params);
@@ -195,8 +202,8 @@ EO_frickin_boot_parms
 
     my $output_delim
       = $display_type eq "SSH" || $display_type eq "SSH-X" ? qr/\Q***  run 'yast.ssh' to start the installation  ***\E/
-      : $display_type eq "VNC" ? qr/\Q*** Starting YaST2 ***\E/
-      :                          die "unknown vars.json:DISPLAY->TYPE <$display_type>";
+      : $display_type eq "VNC"                             ? qr/\Q*** Starting YaST2 ***\E/
+      :                                                      die "unknown vars.json:DISPLAY->TYPE <$display_type>";
 
     $r = $s3270->expect_3270(
         output_delim => $output_delim,
@@ -206,40 +213,33 @@ EO_frickin_boot_parms
 }
 
 sub show_debug {
-    type_string "ps auxf\n";
-    save_screenshot;
-    type_string "dmesg\n";
-    save_screenshot;
+    assert_script_run('ps auxf');
+    assert_script_run('dmesg');
     # make the install-shell look like the ones on other systems where we
     # don't use a ssh session
-    type_string "cd /\n";
     # there is no "clear" in remote system (or was not at time of writing)
-    type_string "reset\n";
+    assert_script_run('cd && reset');
 }
 
-sub create_encrypted_part {
-    my $self = shift;
+sub create_encrypted_part_dasd {
+    my $self      = shift;
+    my $dasd_path = get_var('DASD_PATH', '0.0.0150');
     # activate install-shell to do pre-install dasd-format
     select_console('install-shell');
 
     # bring dasd online
     # exit status 0 -> everything ok
     # exit status 8 -> unformatted but still usable (e.g. from previous testrun)
-    my $r = script_run("dasd_configure 0.0.0150 1");
+    my $r = script_run("dasd_configure $dasd_path 1");
     die "DASD in undefined state" unless (defined($r) && ($r == 0 || $r == 8));
-    # create partition table
-    assert_script_run 'parted -s /dev/dasda mklabel gpt';
-    # create single partition
-    assert_script_run 'parted -s /dev/dasda mkpart 512 100%';
-    # encrypt created partition
-    assert_script_run 'echo nots3cr3t | cryptsetup luksFormat -q --type luks2 --force-password /dev/dasda1';
-    # bring DASD down again to test the activation during the installation
-    assert_script_run("dasd_configure 0.0.0150 0");
+    create_encrypted_part(disk => 'dasda');
+    assert_script_run("dasd_configure $dasd_path 0");
 }
 
 sub format_dasd {
     my $self = shift;
     my $r;
+    my $dasd_path = get_var('DASD_PATH', '0.0.0150');
 
     # activate install-shell to do pre-install dasd-format
     select_console('install-shell');
@@ -247,7 +247,7 @@ sub format_dasd {
     # bring dasd online
     # exit status 0 -> everything ok
     # exit status 8 -> unformatted but still usable (e.g. from previous testrun)
-    $r = script_run("dasd_configure 0.0.0150 1");
+    $r = script_run("dasd_configure $dasd_path 1");
     die "DASD in undefined state" unless (defined($r) && ($r == 0 || $r == 8));
 
     # make sure that there is a dasda device
@@ -257,6 +257,7 @@ sub format_dasd {
     show_debug();
     die "dasd_configure died with exit code $r" unless (defined($r) && $r == 0);
 
+    script_run('lsmod | tee /dev/hvc0');
     # format dasda (this can take up to 20 minutes depending on disk size)
     $r = script_run("echo yes | dasdfmt -b 4096 -p /dev/dasda", 1800);
     show_debug();
@@ -268,7 +269,12 @@ sub format_dasd {
     }
 
     # bring DASD down again to test the activation during the installation
-    assert_script_run("dasd_configure 0.0.0150 0");
+    if (script_run('timeout --preserve-status 20 bash -x /sbin/dasd_configure 0.0.0150 0') != 0) {
+        record_soft_failure('bsc#1151436');
+        script_run('dasd_reload');
+        assert_script_run('dmesg');
+        assert_script_run("bash -x /sbin/dasd_configure -f 0.0.0150 0");
+    }
 }
 
 sub run {
@@ -282,24 +288,19 @@ sub run {
     $s3270->sequence_3270('String("DEFINE STORAGE ' . get_var('QEMURAM', 1024) . 'M") ', "ENTER",);
     # arbitrary number of retries for CTC only as it fails often to retrieve
     # media
+    my $max_retries = 1;
     if (get_required_var('S390_NETWORK_PARAMS') =~ /ctc/) {
         # CTC still can fail with even 7 retries, see https://progress.opensuse.org/issues/10466
         # so an even higher number is selected which might fix this
-        my $max_retries = 20;
-        for (1 .. $max_retries) {
-            eval {
-                # connect to zVM, login to the guest
-                $self->get_to_yast();
-            };
-            last unless ($@);
-            diag "It looks like CTC network connection is unstable. Retry: $_ of $max_retries";
-        }
+        $max_retries = 20;
     }
-    else {
+    for (1 .. $max_retries) {
         eval {
             # connect to zVM, login to the guest
-            $self->get_to_yast();
+            get_to_yast();
         };
+        last unless ($@);
+        diag "It looks like CTC network connection is unstable. Retry: $_ of $max_retries" if (get_required_var('S390_NETWORK_PARAMS') =~ /ctc/);
     }
 
     my $exception = $@;
@@ -307,17 +308,22 @@ sub run {
     die join("\n", '#' x 67, $exception, '#' x 67) if $exception;
 
     # activate console so we can call wait_serial later
-    my $c = select_console('iucvconn', await_console => 0);
+    # skip activate serial console since 11sp4 has issue bsc#1159521: iucvconn command not exist
+    if (!is_sle('=11-sp4')) {
+        select_console('iucvconn', await_console => 0);
+    }
 
     # format DASD before installation by default
-    format_dasd if (check_var('FORMAT_DASD', 'pre_install'));
-    create_encrypted_part if get_var('ENCRYPT_ACTIVATE_EXISTING');
+    format_dasd                if (check_var('FORMAT_DASD', 'pre_install'));
+    create_encrypted_part_dasd if get_var('ENCRYPT_ACTIVATE_EXISTING');
 
     select_console("installation");
 
     # We have textmode installation via ssh and the default vnc installation so far
     if (check_var('VIDEOMODE', 'text') || check_var('VIDEOMODE', 'ssh-x')) {
-        type_string("yast.ssh\n");
+        # Workaround for bsc#1142040
+        # type_string("yast.ssh\n");
+        type_string("QT_XCB_GL_INTEGRATION=none yast.ssh\n") && record_soft_failure('bsc#1142040');
     }
     wait_still_screen;
 

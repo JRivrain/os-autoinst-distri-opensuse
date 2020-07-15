@@ -8,7 +8,11 @@
 # without any warranty.
 
 # Summary: LibreOffice: Favorite Documents link in Computer menu
-# Maintainer: dehai <dhkong@suse.com>
+# - Open desktop main menu
+# - Open favorite documents list
+# - Click libreoffice
+# - Quit libreoffice
+# Maintainer: Zhaocong Jia <zcjia@suse.com>
 # Tags: tc#1503906
 
 use base "x11test";

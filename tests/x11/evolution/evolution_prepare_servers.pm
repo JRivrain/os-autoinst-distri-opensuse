@@ -1,6 +1,6 @@
 # Evolution tests
 #
-# Copyright © 2017 SUSE LLC
+# Copyright © 2017-2020 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -8,6 +8,14 @@
 # without any warranty.
 
 # Summary: Setup dovecot and postfix servers as backend for evolution
+# - Stop packagekit service
+# - Install dovecot if DOVECOT_REPO is defined or it is sled. Otherwise, install
+#   dovecot and postfix and start the later
+# - Configure dovecot enabling ssl and for use of plain login
+# - Enable postix smtp auth in dovecot and generate certificates
+# - Configure postfix enabling tls, smtpd sasl and hostname as localhost
+# - Start dovecot and restart postfix
+# - Create 2 test users: admin and nimda
 # Maintainer: Petr Cervinka <pcervinka@suse.com>
 
 use strict;
@@ -18,7 +26,9 @@ use utils;
 use version_utils qw(is_sle is_jeos is_opensuse);
 
 sub run() {
-    select_console('root-console');
+    my $self = shift;
+    $self->select_serial_terminal;
+
     pkcon_quit;
 
     if (check_var('SLE_PRODUCT', 'sled') || get_var('DOVECOT_REPO')) {
@@ -29,14 +39,13 @@ sub run() {
         zypper_call("--gpg-auto-import-keys ref");
         zypper_call("in dovecot", exitcode => [0, 102, 103]);
         zypper_call("rr dovecot_repo");
-        save_screenshot;
     } else {
         if (is_opensuse) {
             # exim is installed by default in openSUSE, but we need postfix
             zypper_call("in --force-resolution postfix", exitcode => [0, 102, 103]);
             systemctl 'start postfix';
         }
-        zypper_call("in dovecot", exitcode => [0, 102, 103]);
+        zypper_call("in dovecot",                    exitcode => [0, 102, 103]);
         zypper_call("in --force-resolution postfix", exitcode => [0, 102, 103]) if is_jeos;
     }
 
@@ -64,7 +73,7 @@ sub run() {
         $dovecot_path = "/usr/share/doc/packages/dovecot";
     }
 
-    assert_script_run "cd $dovecot_path;bash mkcert.sh";
+    assert_script_run "(cd $dovecot_path; bash mkcert.sh)";
 
     # configure postfix
     assert_script_run "postconf -e 'smtpd_use_tls = yes'";
@@ -85,21 +94,9 @@ sub run() {
 
     # create test users
     assert_script_run "useradd -m admin";
-    script_run "passwd admin", 0;    # set user's password
-    type_password "password123";
-    wait_still_screen(1);
-    send_key 'ret';
-    type_password "password123";
-    wait_still_screen(1);
-    send_key 'ret';
-
     assert_script_run "useradd -m nimda";
-    script_run "passwd nimda", 0;    # set user's password
-    type_password "password123";
-    send_key 'ret';
-    type_password "password123";
-    send_key 'ret';
-    save_screenshot;
+    assert_script_run "echo 'admin:password123' | chpasswd";
+    assert_script_run "echo 'nimda:password123' | chpasswd";
 
     systemctl 'status dovecot';
     systemctl 'status postfix';
@@ -108,7 +105,14 @@ sub run() {
 }
 
 sub test_flags() {
-    return {milestone => 1};
+    return get_var('PUBLIC_CLOUD') ? {milestone => 0, fatal => 1, no_rollback => 1} : {milestone => 1, fatal => 1};
+}
+
+sub post_fail_hook {
+    my ($self) = shift;
+    select_console('log-console');
+    $self->SUPER::post_fail_hook;
+    $self->export_logs_basic;
 }
 
 1;

@@ -7,10 +7,11 @@ use base 'Exporter';
 use Exporter;
 
 use testapi;
+use version_utils 'is_opensuse';
 
 our @EXPORT = qw(configure_hostname get_host_resolv_conf
   configure_static_ip configure_dhcp configure_default_gateway configure_static_dns
-  parse_network_configuration ip_in_subnet check_ip_in_subnet);
+  parse_network_configuration ip_in_subnet check_ip_in_subnet setup_static_mm_network);
 
 sub configure_hostname {
     my ($hostname) = @_;
@@ -27,12 +28,12 @@ sub configure_hostname {
 sub get_host_resolv_conf {
     my %conf;
     open(my $fh, '<', "/etc/resolv.conf");
-    while (<$fh>) {
-        if (/^nameserver\s+([0-9.]+)\s*$/) {
+    while (my $line = <$fh>) {
+        if ($line =~ /^nameserver\s+([0-9.]+)\s*$/) {
             $conf{nameserver} //= [];
             push @{$conf{nameserver}}, $1;
         }
-        if (/search\s+(.+)\s*$/) {
+        if ($line =~ /search\s+(.+)\s*$/) {
             $conf{search} = $1;
         }
     }
@@ -78,11 +79,12 @@ sub configure_default_gateway {
 }
 
 sub configure_static_dns {
-    my ($conf) = @_;
+    my ($conf, $silent) = @_;
+    $silent //= 0;
     my $servers = join(" ", @{$conf->{nameserver}});
-    script_run("sed -i -e 's|^NETCONFIG_DNS_STATIC_SERVERS=.*|NETCONFIG_DNS_STATIC_SERVERS=\"$servers\"|' /etc/sysconfig/network/config");
-    script_run("netconfig -f update");
-    script_run("cat /etc/resolv.conf");
+    assert_script_run("sed -i -e 's|^NETCONFIG_DNS_STATIC_SERVERS=.*|NETCONFIG_DNS_STATIC_SERVERS=\"$servers\"|' /etc/sysconfig/network/config");
+    assert_script_run("netconfig -f update");
+    assert_script_run("cat /etc/resolv.conf") unless $silent;
 }
 
 sub parse_network_configuration {
@@ -167,6 +169,17 @@ sub check_ip_in_subnet {
     my $check_ip = ((($i1 * 256) + $i2) * 256 + $i3) * 256 + $i4;
 
     return ($check_ip & $mask_ip) == ($subnet_ip & $mask_ip);
+}
+
+sub setup_static_mm_network {
+    my $ip = shift;
+    if (is_opensuse && !check_var('DESKTOP', 'textmode')) {
+        assert_script_run "systemctl disable NetworkManager --now";
+        assert_script_run "systemctl enable wicked --now";
+    }
+    configure_default_gateway;
+    configure_static_ip($ip);
+    configure_static_dns(get_host_resolv_conf());
 }
 
 1;

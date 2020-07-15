@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright © 2016-2018 SUSE LLC
+# Copyright © 2016-2020 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -15,22 +15,52 @@ use strict;
 use warnings;
 use testapi;
 use lockapi;
-use y2x11test 'setup_static_mm_network';
-use utils qw(zypper_call systemctl);
+use mm_network 'setup_static_mm_network';
+use utils 'zypper_call';
+use Utils::Systemd 'disable_and_stop_service';
+use version_utils qw(is_sle is_opensuse);
 
 sub run {
     my ($self) = @_;
     my $hostname = get_var('HOSTNAME');
     select_console 'root-console';
 
+    # Do not use external DNS for our internal hostnames
+    assert_script_run('echo "10.0.2.101 server master" >> /etc/hosts');
+    assert_script_run('echo "10.0.2.102 client minion" >> /etc/hosts');
+
     # Configure static network, disable firewall
-    systemctl 'stop ' . $self->firewall;
-    systemctl 'disable ' . $self->firewall;
+    disable_and_stop_service($self->firewall);
+    disable_and_stop_service('apparmor', ignore_failure => 1);
+
+    # Configure the internal network an  try it
     if ($hostname =~ /server|master/) {
         setup_static_mm_network('10.0.2.101/24');
+        #if server running opensuse.
+        if (is_opensuse) {
+            disable_and_stop_service('NetworkManager', ignore_failure => 1);
+            assert_script_run 'systemctl start  wicked';
+        }
     }
     else {
         setup_static_mm_network('10.0.2.102/24');
+
+        my $base_product = get_var('SLE_PRODUCT');
+        if ($base_product eq "sled") {
+            if (is_sle('=15')) {
+                assert_script_run 'systemctl restart  wicked';
+            }
+            else {
+                disable_and_stop_service('NetworkManager', ignore_failure => 1);
+                assert_script_run 'systemctl enable wicked';
+                assert_script_run 'systemctl start  wicked';
+            }
+        }
+        #Opensuse versions
+        if (is_opensuse) {
+            disable_and_stop_service('NetworkManager', ignore_failure => 1);
+            assert_script_run 'systemctl start  wicked';
+        }
     }
 
     # Set the hostname to identify both minions
@@ -40,3 +70,4 @@ sub run {
 }
 
 1;
+

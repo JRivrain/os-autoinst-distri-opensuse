@@ -22,6 +22,7 @@ use testapi;
 use caasp 'microos_reboot';
 use power_action_utils 'power_action';
 use version_utils qw(is_opensuse is_caasp);
+use utils 'reconnect_mgmt_console';
 
 our @EXPORT = qw(
   process_reboot
@@ -30,19 +31,53 @@ our @EXPORT = qw(
   trup_call
   trup_install
   trup_shell
+  get_utt_packages
 );
 
+# Download files needed for transactional update tests
+sub get_utt_packages {
+    # CaaSP needs an additional repo for testing
+    assert_script_run 'curl -O ' . data_url("caasp/utt.repo") unless is_opensuse;
+
+    # Different testfiles for SLE (CaaSP) and openSUSE (Kubic)
+    my $tarball = 'utt-';
+    $tarball .= is_opensuse() ? 'opensuse' : 'sle';
+    $tarball .= '-' . get_required_var('ARCH') . '.tgz';
+
+    assert_script_run 'curl -O ' . data_url("caasp/$tarball");
+    assert_script_run "tar xzvf $tarball";
+}
+
+# After automated rollback initialization passes by GRUB twice.
+# Here it is handled the first time GRUB is displayed
+sub handle_first_grub {
+    type_string "reboot\n";
+    if (check_var('ARCH', 's390x')) {
+        reconnect_mgmt_console(timeout => 500, grub_expected_twice => 1);
+    } else {
+        assert_screen 'grub2', 100;
+        wait_screen_change { send_key 'ret' };
+    }
+}
+
 sub process_reboot {
-    my $trigger = shift // 0;
+    my (%args) = @_;
+    $args{trigger}            //= 0;
+    $args{automated_rollback} //= 0;
+
+    handle_first_grub if ($args{automated_rollback});
 
     if (is_caasp) {
-        microos_reboot $trigger;
+        microos_reboot $args{trigger};
     } else {
-        power_action('reboot', observe => !$trigger, keepconsole => 1);
-
-        # Replace by wait_boot if possible
-        assert_screen 'grub2', 100;
-        send_key 'ret';
+        power_action('reboot', observe => !$args{trigger}, keepconsole => 1);
+        if (check_var('ARCH', 's390x')) {
+            reconnect_mgmt_console(timeout => 500) unless $args{automated_rollback};
+        } else {
+            # Replace by wait_boot if possible
+            assert_screen 'grub2', 100;
+            wait_screen_change { send_key 'ret' };
+        }
         assert_screen 'linux-login', 200;
 
         # Login & clear login needle
@@ -64,11 +99,11 @@ sub check_reboot_changes {
     my $change_happened = script_run "diff $mounted $default";
 
     # If changes are expected check that default subvolume changed
-    die "Error during diff" if $change_happened > 1;
-    die "Change expected: $change_expected, happeed: $change_happened" if $change_expected != $change_happened;
+    die "Error during diff"                                             if $change_happened > 1;
+    die "Change expected: $change_expected, happened: $change_happened" if $change_expected != $change_happened;
 
     # Reboot into new snapshot
-    process_reboot 1 if $change_happened;
+    process_reboot(trigger => 1) if $change_happened;
 }
 
 # Return names and version of packages for transactional-update tests
@@ -100,6 +135,9 @@ sub trup_call {
     my $check = shift // 1;
     $cmd .= " > /dev/$serialdev";
     $cmd .= " ; echo trup-\$?- > /dev/$serialdev" if $check;
+
+    # Always wait for rollback.service to be finished before triggering manually transactional-update
+    ensure_rollback_service_not_running();
 
     script_run "transactional-update --no-selfupdate $cmd", 0;
     if ($cmd =~ /pkg |ptf /) {
@@ -135,7 +173,7 @@ sub trup_install {
     }
     if ($necessary) {
         trup_call("pkg install $necessary");
-        process_reboot(1);
+        process_reboot(trigger => 1);
     }
 
     # By the end, all pkgs should be installed
@@ -154,6 +192,18 @@ sub trup_shell {
     type_string("exit\n");
     wait_serial('trup_shell-status-0') || die "'transactional-update shell' didn't finish";
 
-    process_reboot 1 if $args{reboot};
+    process_reboot(trigger => 1) if $args{reboot};
 }
 
+# When transactional-update is triggered manually is required to wait for rollback.service
+# to not be running. This is needed because rollback.service is triggered on first boot
+# after updates or rollbacks.
+# The transactional-update.timer waits for that service to be finished before starting itself.
+# In general automated services will make sure that they don't block each other,
+# but this does not apply when manual triggering of the script.
+sub ensure_rollback_service_not_running {
+    for (1 .. 24) {
+        my $output = script_output("systemctl show -p SubState --value rollback.service");
+        $output =~ '^(start|running)$' ? sleep 10 : last;
+    }
+}

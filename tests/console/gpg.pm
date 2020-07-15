@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright © 2017-2019 SUSE LLC
+# Copyright © 2017-2020 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -8,8 +8,19 @@
 # without any warranty.
 
 # Summary: gpg key generation, passphrase test, encrypt file and support fips test
-# Maintainer: Petr Cervinka <pcervinka@suse.com>, Dehai Kong <dhkong@suse.com>
-#             wnereiz <wnereiz@member.fsf.org>
+# - Install haveged if necessary
+# - Generate gpg key pair using pre determined data (using gpg itself or openqa
+#   commands, depending on gpg version)
+# - Check if key lenght is between 2048 and 4096 bits
+# - Encrypt text file
+# - Decrypt gpg file created
+# - Reload gpg-agent (drop passphrase cache)
+# - Sign test file
+# - Check test file signature
+# - Cleanup
+#
+# Maintainer: Petr Cervinka <pcervinka@suse.com>, Ben Chou <bchou@suse.com>
+# Tags: poo#65375
 
 use base "consoletest";
 use strict;
@@ -46,7 +57,7 @@ EOF
         );
         assert_script_run("cat $egg_file");
 
-        script_run("gpg2 -vv --batch --full-generate-key $egg_file |& tee /dev/$serialdev", 0);
+        script_run("gpg2 -vv --batch --full-generate-key $egg_file &> /dev/$serialdev", 0);
     }
     else {
         # Batch mode does not work in gpg version < 2.1. Workaround like using
@@ -56,10 +67,10 @@ EOF
         # appeared at the bottom for needles matching
         assert_script_run "gpg -h";
 
-        script_run("gpg2 -vv --gen-key |& tee /dev/$serialdev", 0);
-        assert_screen 'gpg-set-keytype';       # Your Selection?
+        script_run("gpg2 -vv --gen-key &> /dev/$serialdev", 0);
+        assert_screen 'gpg-set-keytype';    # Your Selection?
         type_string "1\n";
-        assert_screen 'gpg-set-keysize';       # What keysize do you want?
+        assert_screen 'gpg-set-keysize';    # What keysize do you want?
         type_string "$key_size\n";
         assert_screen 'gpg-set-expiration';    # Key is valid for? (0)
         send_key 'ret';
@@ -89,7 +100,7 @@ EOF
     # 2048 and 4096 key length should be supported. See bsc#1125740 comment#15
     # for details
     if (get_var('FIPS') || get_var('FIPS_ENABLED') && ($key_size == '1024' || $key_size == '4096')) {
-        wait_serial("gpg: agent_genkey failed: Invalid value", 90) || die "It should failed with invalid value!";
+        wait_serial("failed: Invalid value", 90) || die "It should failed with invalid value!";
         return;
     }
 
@@ -107,7 +118,7 @@ EOF
     assert_script_run("echo 'foo test content' > $tfile");
     assert_script_run("gpg2 -r $email -e $tfile");
     assert_script_run("test -e $tfile_gpg");
-    script_run("gpg2 -u $email -d $tfile_gpg |& tee /dev/$serialdev", 0);
+    script_run("gpg2 -u $email -d $tfile_gpg &> /dev/$serialdev", 0);
     assert_screen("gpg-passphrase-unlock", 10);
     type_string "$passwd\n";
     wait_serial("foo test content", 90) || die "File decryption failed!";
@@ -116,7 +127,7 @@ EOF
     assert_script_run("pgrep gpg-agent && echo RELOADAGENT | gpg-connect-agent ; true");
 
     # Signing function
-    script_run("gpg2 -u $email --clearsign $tfile |& tee /dev/$serialdev", 0);
+    script_run("gpg2 -u $email --clearsign $tfile &> /dev/$serialdev", 0);
     assert_screen("gpg-passphrase-unlock", 10);
     type_string "$passwd\n";
     assert_script_run("test -e $tfile_asc");
@@ -131,7 +142,7 @@ sub run {
     select_console 'root-console';
 
     # increase entropy for key generation for s390x on svirt backend
-    if (check_var('ARCH', 's390x') && (is_sle('>15') && (check_var('BACKEND', 'svirt')))) {
+    if (check_var('ARCH', 's390x') && (is_sle('15+') && (check_var('BACKEND', 'svirt')))) {
         zypper_call('in haveged');
         systemctl('start haveged');
     }
@@ -145,6 +156,10 @@ sub run {
     foreach my $len ('1024', '2048', '3072', '4096') {
         gpg_test($len, $gpg_version);
     }
+}
+
+sub test_flags {
+    return {fatal => 0};
 }
 
 1;

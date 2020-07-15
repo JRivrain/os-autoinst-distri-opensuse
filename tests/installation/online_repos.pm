@@ -18,9 +18,9 @@
 # Summary: Process online repos during installation, relevant for openSUSE only
 # Maintainer: Rodion Iafarov <riafarov@suse.com>
 
+use base 'y2_installbase';
 use strict;
 use warnings;
-use base "y2logsstep";
 use testapi;
 use version_utils qw(:VERSION :SCENARIO);
 use utils 'installwithaddonrepos_is_applicable';
@@ -55,7 +55,7 @@ sub run {
     ## Do not enable online repos by default
     ## List possible screens if pop-up is not there as a fallback
     my @needles = qw(online-repos-popup before-role-selection inst-networksettings partitioning-edit-proposal-button inst-instmode network-not-configured list-of-online-repositories);
-    assert_screen(\@needles);
+    assert_screen(\@needles, timeout => 60);
 
     # Do nothing if pop-up is not found
     return unless match_has_tag('online-repos-popup');

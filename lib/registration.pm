@@ -1,4 +1,4 @@
-# Copyright (C) 2015-2019 SUSE LLC
+# Copyright (C) 2015-2020 SUSE LLC
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,17 +17,17 @@ package registration;
 
 use base Exporter;
 use Exporter;
-
 use strict;
 use warnings;
-
 use testapi;
 use utils qw(addon_decline_license assert_screen_with_soft_timeout zypper_call systemctl handle_untrusted_gpg_key);
-use version_utils qw(is_sle is_caasp is_upgrade);
+use version_utils qw(is_sle is_sles4sap is_caasp is_upgrade);
 use constant ADDONS_COUNT => 50;
+use y2_module_consoletest;
 
 our @EXPORT = qw(
   add_suseconnect_product
+  ssh_add_suseconnect_product
   remove_suseconnect_product
   cleanup_registration
   register_product
@@ -37,17 +37,21 @@ our @EXPORT = qw(
   registration_bootloader_params
   yast_scc_registration
   skip_registration
+  skip_package_hub_if_necessary
   scc_deregistration
   scc_version
   get_addon_fullname
   rename_scc_addons
   is_module
-  install_docker_when_needed
   verify_scc
   investigate_log_empty_license
+  register_addons_cmd
+  register_addons
   %SLE15_MODULES
   %SLE15_DEFAULT_MODULES
+  %ADDONS_REGCODE
   @SLE15_ADDONS_WITHOUT_LICENSE
+  @SLE12_MODULES
 );
 
 # We already have needles with names which are different we would use here
@@ -75,8 +79,28 @@ our %SLE15_DEFAULT_MODULES = (
     sles4sap => 'base,desktop,serverapp,ha,sapapp',
 );
 
+our %ADDONS_REGCODE = (
+    'sle-ha'                   => get_var('SCC_REGCODE_HA'),
+    'sle-ha-geo'               => get_var('SCC_REGCODE_GEO'),
+    'sle-we'                   => get_var('SCC_REGCODE_WE'),
+    'sle-module-live-patching' => get_var('SCC_REGCODE_LIVE'),
+    'sle-live-patching'        => get_var('SCC_REGCODE_LIVE'),
+    'SLES-LTSS'                => get_var('SCC_REGCODE_LTSS'),
+    'SUSE-Linux-Enterprise-RT' => get_var('SCC_REGCODE_RT'),
+);
+
 our @SLE15_ADDONS_WITHOUT_LICENSE        = qw(ha sdk wsm we hpcm live);
 our @SLE15_ADDONS_WITH_LICENSE_NOINSTALL = qw(ha we);
+
+# Those modules' version is 12 for all of 12 sp products
+our @SLE12_MODULES = qw(
+  sle-module-adv-systems-management
+  sle-module-containers
+  sle-module-legacy
+  sle-module-toolchain
+  sle-module-web-scripting
+  sle-module-public-cloud
+);
 
 # Method to determine if a short name references a module based on what's defined
 # on %SLE15_MODULES
@@ -88,17 +112,22 @@ sub is_module {
 sub accept_addons_license {
     my (@scc_addons) = @_;
 
+    # Trap the 'missing license file on media' issue
+    # Needle is configured as a workaround, so a soft-fail will be shown
+    send_key 'alt-s' if check_screen('license-insert-disc-issue', 30);
+
     # To check the current state of licenses in the product one can conduct
     # the following steps, e.g. for SLE15:
     #   isc co SUSE:SLE-15:GA 000product
     #   grep -l EULA SUSE:SLE-15:GA/000product/*.product | sed 's/.product//'
     # All shown products have a license that should be checked.
-    my @addons_with_license = qw(geo rt idu ids);
+    my @addons_with_license = qw(geo rt idu);
     # For the legacy module we do not need any additional subscription,
     # like all modules, it is included in the SLES subscription.
     push @addons_with_license, 'lgm' unless is_sle('15+');
-    if (is_sle('15+') && get_var('SCC_ADDONS') =~ /ses/) {
-        record_soft_failure 'bsc#1118497';
+    if (is_sle('15+') && get_var('SCC_ADDONS') =~ /ses/ && get_var('BETA')) {
+        # during development is license not shown as it was already been shown once
+        record_info 'bsc#1118497';
     }
     else {
         push @addons_with_license, 'ses';
@@ -109,6 +138,8 @@ sub accept_addons_license {
     push @addons_with_license, @SLE15_ADDONS_WITHOUT_LICENSE unless is_sle('15+');
     # HA and WE have licenses when calling yast2 scc
     push @addons_with_license, @SLE15_ADDONS_WITH_LICENSE_NOINSTALL if (is_sle('15+') and get_var('IN_PATCH_SLE'));
+    # HA does not show EULA when doing migration to 12-SP5
+    @addons_with_license = grep { $_ ne 'ha' } @addons_with_license if (is_sle('12-sp5+') && get_var('UPGRADE') && !get_var('IN_PATCH_SLE'));
 
     for my $addon (@scc_addons) {
         # most modules don't have license, skip them
@@ -144,12 +175,47 @@ sub scc_version {
 Wrapper for SUSEConnect -p $name.
 =cut
 sub add_suseconnect_product {
-    my ($name, $version, $arch, $params, $timeout) = @_;
+    my ($name, $version, $arch, $params, $timeout, $retry) = @_;
     assert_script_run 'source /etc/os-release';
     $version //= '${VERSION_ID}';
     $arch    //= '${CPU}';
     $params  //= '';
-    assert_script_run("SUSEConnect -p $name/$version/$arch $params", $timeout);
+    $retry   //= 0;                 # run SUSEConnect a 2nd time to workaround the gpg error due to missing repo key on 1st run
+
+    my $result = script_run("SUSEConnect -p $name/$version/$arch $params", $timeout);
+    if ($result != 0 && $retry) {
+        if ($name =~ /PackageHub/) {
+            record_soft_failure 'bsc#1124318 - Fail to get module repo metadata - running the command again as a workaround';
+        }
+        assert_script_run("SUSEConnect -p $name/$version/$arch $params", $timeout);
+    } elsif ($result && !$retry) {
+        die "SUSEConnect failed activating module $name with exit code (see log output): $result.";
+    }
+}
+
+=head2 ssh_add_suseconnect_product
+
+    ssh_add_suseconnect_product($remote, $name, [$version, [$arch, [$params]]]);
+
+Wrapper for SUSEConnect -p $name  over ssh.
+=cut
+sub ssh_add_suseconnect_product {
+    my ($remote, $name, $version, $arch, $params, $timeout, $retry) = @_;
+    assert_script_run "sftp $remote:/etc/os-release /tmp/os-release";
+    assert_script_run 'source /tmp/os-release';
+    $version //= '${VERSION_ID}';
+    $arch    //= '${CPU}';
+    $params  //= '';
+    $retry   //= 0;                 # run SUSEConnect a 2nd time to workaround the gpg error due to missing repo key on 1st run
+    $timeout //= 300;
+
+    my $result = script_run("ssh $remote sudo SUSEConnect -p $name/$version/$arch $params", $timeout);
+    if ($result != 0 && $retry) {
+        if ($name =~ /PackageHub/) {
+            record_soft_failure 'bsc#1124318 - Fail to get module repo metadata - running the command again as a workaround';
+        }
+        assert_script_run("ssh $remote sudo SUSEConnect -p $name/$version/$arch $params", $timeout);
+    }
 }
 
 =head2 remove_suseconnect_product
@@ -188,7 +254,38 @@ sub cleanup_registration {
 Wrapper for SUSEConnect -r <regcode>. Requires SCC_REGCODE variable.
 =cut
 sub register_product {
-    assert_script_run 'SUSEConnect -r ' . get_required_var('SCC_REGCODE');
+    assert_script_run('SUSEConnect -r ' . get_required_var('SCC_REGCODE'), 200);
+}
+
+sub register_addons_cmd {
+    my ($addonlist) = @_;
+    $addonlist //= get_var('SCC_ADDONS');
+    my @addons = grep { defined $_ && $_ } split(/,/, $addonlist);
+    if (check_var('DESKTOP', 'gnome') && is_sle('15+')) {
+        my $desk = "sle-module-desktop-applications";
+        record_info($desk, "Register $desk");
+        add_suseconnect_product($desk, undef, undef, undef, 300, 1);
+    }
+    foreach my $addon (@addons) {
+        my $name = get_addon_fullname($addon);
+        if (length $name) {
+            record_info($name, "Register $name");
+            if (grep(/$name/, @SLE12_MODULES) and is_sle('<15')) {
+                my @ver = split(/\./, scc_version());
+                add_suseconnect_product($name, $ver[0], undef, undef, 300, 1);
+            }
+            elsif (grep(/$name/, keys %ADDONS_REGCODE)) {
+                add_suseconnect_product($name, undef, undef, "-r " . $ADDONS_REGCODE{$name}, 300, 1);
+                if ($name =~ /we/) {
+                    zypper_call("--gpg-auto-import-keys ref");
+                    add_suseconnect_product($name, undef, undef, "-r " . $ADDONS_REGCODE{$name}, 300, 1);
+                }
+            }
+            else {
+                add_suseconnect_product($name, undef, undef, undef, 300, 1);
+            }
+        }
+    }
 }
 
 sub register_addons {
@@ -203,16 +300,22 @@ sub register_addons {
         my @addons_with_code = qw(geo live rt ltss ses);
         # WE doesn't need code on SLED
         push @addons_with_code, 'we' unless (check_var('SLE_PRODUCT', 'sled'));
-        # HA doesn't need code on SLES4SAP
-        push @addons_with_code, 'ha' unless (check_var('SLE_PRODUCT', 'sles4sap'));
-        if (my $regcode = get_var("SCC_REGCODE_$uc_addon")) {
+        # HA doesn't need code on SLES4SAP or in migrations to 12-SP5
+        push @addons_with_code, 'ha' unless (check_var('SLE_PRODUCT', 'sles4sap') || (is_sle('12-sp5+') && get_var('UPGRADE') && !get_var('IN_PATCH_SLE')));
+        if ((my $regcode = get_var("SCC_REGCODE_$uc_addon")) or ($addon eq "ltss")) {
             # skip addons which doesn't need to input scc code
             next unless grep { $addon eq $_ } @addons_with_code;
             if (check_var('VIDEOMODE', 'text')) {
-                send_key_until_needlematch "scc-code-field-$addon", 'tab';
+                send_key_until_needlematch("scc-code-field-$addon", 'tab', 60, 3);
             }
             else {
-                assert_and_click "scc-code-field-$addon", 'left', 240;
+                assert_and_click("scc-code-field-$addon", timeout => 240);
+            }
+            # avoid duplicated tests to manage LTSS regcode by integrating new variables
+            if ($addon eq "ltss") {
+                my $os_sp_version = get_var("HDDVERSION");
+                $os_sp_version =~ s/-/_/g;
+                $regcode = get_var("SCC_REGCODE_LTSS_$os_sp_version", $regcode);
             }
             type_string $regcode;
             save_screenshot;
@@ -251,6 +354,38 @@ sub verify_preselected_modules {
     die 'Scroll reached to bottom not finding individual needles for each module.' if @needles;
 }
 
+sub _yast_scc_addons_handler {
+    if (match_has_tag('yast_scc-license-dialog')) {
+        send_key 'alt-a';
+        next;
+    }
+    # yast may pop up dependencies or reboot prompt window
+    if (match_has_tag('yast_scc-automatic-changes') or match_has_tag('unsupported-packages') or match_has_tag('yast_scc-prompt-reboot')) {
+        wait_screen_change { send_key "alt-o" };
+        next;
+    }
+    if (match_has_tag('yast_scc-installation-summary')) {
+        send_key 'alt-f';
+        last;
+    }
+}
+
+sub skip_package_hub_if_necessary {
+    my ($addon) = @_;
+    my $skip_package_hub = 0;
+    if (is_sle('15-SP2+') && $addon eq 'phub') {
+        if (check_var('FLAVOR', 'Online')) {
+            record_info('Skip phub', 'For Online medium we need to skip Package Hub registration due to 
+                after registering this module, some packages not supported that comes from openSUSE
+                might conflict not allowing to have a predictable result - bsc#1172074');
+        } elsif (check_var('FLAVOR', 'Full')) {
+            record_info('Skip phub', 'Skipping Package Hub for Full medium due to it is an Online product - bsc#1157659');
+        }
+        $skip_package_hub = 1;
+    }
+    return $skip_package_hub;
+}
+
 sub process_scc_register_addons {
     # The value of SCC_ADDONS is a list of abbreviation of addons/modules
     # Following are abbreviations defined for modules and some addons
@@ -276,8 +411,11 @@ sub process_scc_register_addons {
     #   wsm - Web and Scripting Module
     if (get_var('SCC_ADDONS')) {
         if (check_screen('scc-beta-filter-checkbox', 5)) {
-            if (get_var('SP3ORLATER')) {
-                send_key 'alt-i';    # uncheck 'Hide Beta Versions'
+            if (is_sle('12-SP3+')) {
+                # Uncheck 'Hide Beta Versions'
+                # The workaround with send_key_until_needlematch is added,
+                # because on ppc64le the shortcut key does not reach VM sporadically.
+                send_key_until_needlematch('scc-beta-filter-unchecked', 'alt-i', 3, 5);
             }
             else {
                 send_key 'alt-f';    # uncheck 'Filter Out Beta Version'
@@ -289,6 +427,7 @@ sub process_scc_register_addons {
         @scc_addons = grep { $_ ne '' } @scc_addons;
 
         for my $addon (@scc_addons) {
+            next if (skip_package_hub_if_necessary($addon));
             if (check_var('VIDEOMODE', 'text') || check_var('SCC_REGISTER', 'console')) {
                 # The actions of selecting scc addons have been changed on SP2 or later in textmode
                 # For online migration, we have to do registration on pre-created HDD, set a flag
@@ -328,6 +467,9 @@ sub process_scc_register_addons {
         wait_still_screen 2;
         # Process addons licenses
         accept_addons_license @scc_addons;
+        while (check_screen('import-untrusted-gpg-key', 60)) {
+            handle_untrusted_gpg_key;
+        }
         # Press next only if entered reg code for any addon
         if (register_addons @scc_addons) {
             assert_screen 'ext-modules-reg-codes';
@@ -336,12 +478,25 @@ sub process_scc_register_addons {
         }
         # start addons/modules registration, it needs longer time if select multiple or all addons/modules
         my $counter = ADDONS_COUNT;
+        my @needles = qw(import-untrusted-gpg-key nvidia-validation-failed yast_scc-pkgtoinstall yast-scc-emptypkg inst-addon contacting-registration-server refreshing-repository system-probing);
+        if (is_sle('15-SP2+')) {
+            # In SLE 15 SP2 multipath detection happens directly after registration, so using it to detect that all pop-up are processed
+            push @needles, 'enable-multipath' if get_var('MULTIPATH');
+            # Similarly for encrypted partitions activation
+            push @needles, 'encrypted_volume_activation_prompt' if (get_var('ENCRYPT_ACTIVATE_EXISTING') || get_var('ENCRYPT_CANCEL_EXISTING'));
+        }
+        push @needles, 'sles4sap-product-installation-mode' if (is_sles4sap() && is_sle('<=12-SP3'));
         while ($counter--) {
             die 'Addon registration repeated too much. Check if SCC is down.' if ($counter eq 1);
-            assert_screen [
-                qw(import-untrusted-gpg-key yast_scc-pkgtoinstall yast-scc-emptypkg inst-addon contacting-registration-server refreshing-repository)];
+            assert_screen([@needles], 90);
             if (match_has_tag('import-untrusted-gpg-key')) {
                 handle_untrusted_gpg_key;
+                next;
+            }
+            elsif (match_has_tag('nvidia-validation-failed')) {
+                # nvidia repos unreliable
+                send_key 'alt-y';
+                record_soft_failure 'bsc#1144831';
                 next;
             }
             elsif (match_has_tag('yast_scc-pkgtoinstall')) {
@@ -353,19 +508,7 @@ sub process_scc_register_addons {
                         ['yast_scc-license-dialog', 'yast_scc-automatic-changes', 'yast_scc-prompt-reboot', 'yast_scc-installation-summary'], 1800
                     ))
                 {
-                    if (match_has_tag('yast_scc-license-dialog')) {
-                        send_key 'alt-a';
-                        next;
-                    }
-                    # yast may pop up dependencies or reboot prompt window
-                    if (match_has_tag('yast_scc-automatic-changes') or match_has_tag('unsupported-packages') or match_has_tag('yast_scc-prompt-reboot')) {
-                        wait_screen_change { send_key "alt-o" };
-                        next;
-                    }
-                    if (match_has_tag('yast_scc-installation-summary')) {
-                        send_key 'alt-f';
-                        last;
-                    }
+                    _yast_scc_addons_handler();
                 }
                 last;
             }
@@ -376,22 +519,21 @@ sub process_scc_register_addons {
                     send_key 'alt-a';
                     last;    # Exit yast scc register, no package need be install
                 }
-                else {
-                    record_soft_failure 'bsc#1040758';
-                    next;    # Yast may popup dependencies or software install dialog, enter determine statement again.
-                }
-            }
-            elsif (match_has_tag('contacting-registration-server')) {
+            }    # detecting if need to wait as registration is still on-going
+            elsif (match_has_tag('contacting-registration-server') ||
+                match_has_tag('system-probing') ||
+                match_has_tag('refreshing-repository')) {
                 sleep 5;
                 next;
             }
-            elsif (match_has_tag('refreshing-repository')) {
-                sleep 5;
-                next;
-            }
-            elsif (match_has_tag('inst-addon')) {
+            elsif (match_has_tag('inst-addon') ||
+                match_has_tag('enable-multipath') ||
+                match_has_tag('encrypted_volume_activation_prompt')) {
                 # it would show Add On Product screen if scc registration correctly during installation
                 # it would show software install dialog if scc registration correctly by yast2 scc
+                last;
+            }
+            elsif (match_has_tag('sles4sap-product-installation-mode')) {
                 last;
             }
         }
@@ -427,18 +569,27 @@ sub fill_in_registration_data {
     unless (get_var('SCC_REGISTER', '') =~ /addon|network/) {
         my $counter = ADDONS_COUNT;
         my @tags
-          = qw(local-registration-servers registration-online-repos import-untrusted-gpg-key module-selection contacting-registration-server refreshing-repository);
+          = qw(local-registration-servers registration-online-repos import-untrusted-gpg-key nvidia-validation-failed module-selection contacting-registration-server refreshing-repository);
         if (get_var('SCC_URL') || get_var('SMT_URL')) {
             push @tags, 'untrusted-ca-cert';
         }
+        # The SLE15-SP2 license page moved after registration.
+        push @tags, 'license-agreement'          if (!get_var('MEDIA_UPGRADE') && is_sle('15-SP2+'));
+        push @tags, 'license-agreement-accepted' if (!get_var('MEDIA_UPGRADE') && is_sle('15-SP2+'));
         # The "Extension and Module Selection" won't be shown during upgrade to sle15, refer to:
         # https://bugzilla.suse.com/show_bug.cgi?id=1070031#c11
         push @tags, 'inst-addon' if is_sle('15+') && is_upgrade;
         while ($counter--) {
             die 'Registration repeated too much. Check if SCC is down.' if ($counter eq 1);
-            assert_screen(\@tags);
+            assert_screen(\@tags, timeout => 360);
             if (match_has_tag('import-untrusted-gpg-key')) {
                 handle_untrusted_gpg_key;
+                next;
+            }
+            elsif (match_has_tag('nvidia-validation-failed')) {
+                # sometimes nvidia driver repos are unreliable
+                send_key 'alt-y';
+                record_soft_failure 'bsc#1144831';
                 next;
             }
             elsif (match_has_tag('contacting-registration-server')) {
@@ -476,6 +627,13 @@ sub fill_in_registration_data {
             }
             elsif (match_has_tag('inst-addon')) {
                 return;
+            }
+            elsif (match_has_tag("license-agreement") || match_has_tag("license-agreement-accepted")) {
+                send_key 'alt-a' unless match_has_tag("license-agreement-accepted");
+                record_soft_failure 'bsc#1080450: license agreement is shown twice' if match_has_tag("license-agreement-accepted");
+                send_key $cmd{next};
+                assert_screen "remove-repository";
+                send_key $cmd{next};
             }
         }
     }
@@ -562,7 +720,7 @@ sub registration_bootloader_params {
 }
 
 sub yast_scc_registration {
-    my $module_name = y2logsstep::yast2_console_exec(yast2_module => 'scc');
+    my $module_name = y2_module_consoletest::yast2_console_exec(yast2_module => 'scc');
     assert_screen_with_soft_timeout(
         'scc-registration',
         timeout      => 90,
@@ -597,9 +755,10 @@ sub get_addon_fullname {
         geo       => 'sle-ha-geo',
         we        => 'sle-we',
         sdk       => is_sle('15+') ? 'sle-module-development-tools' : 'sle-sdk',
+        dev       => 'sle-module-development-tools',
         ses       => 'ses',
         live      => is_sle('15+') ? 'sle-module-live-patching' : 'sle-live-patching',
-        asmm      => 'sle-module-adv-systems-management',
+        asmm      => is_sle('15+') ? 'sle-module-basesystem' : 'sle-module-adv-systems-management',
         base      => 'sle-module-basesystem',
         contm     => 'sle-module-containers',
         desktop   => 'sle-module-desktop-applications',
@@ -611,8 +770,11 @@ sub get_addon_fullname {
         rt        => 'SUSE-Linux-Enterprise-RT',
         script    => 'sle-module-web-scripting',
         serverapp => 'sle-module-server-applications',
-        tcm       => 'sle-module-toolchain',
+        tcm       => is_sle('15+') ? 'sle-module-development-tools' : 'sle-module-toolchain',
         wsm       => 'sle-module-web-scripting',
+        python2   => 'sle-module-python2',
+        phub      => 'PackageHub',
+        tsm       => 'sle-module-transactional-server'
     );
     return $product_list{"$addon"};
 }
@@ -641,9 +803,12 @@ sub fill_in_reg_server {
     }
     else {
         send_key "alt-i";
-        # Fresh install sles12sp3/4 shortcut is different with upgrade version
-        # Refer https://progress.opensuse.org/issues/47327
-        if ((is_sle('12-sp3+') && is_sle('<15') && get_var('UPGRADE')) || is_sle('>=15')) {
+        # Fresh install sles12sp2/3/4/5 shortcut is different with upgrade version.
+        # We add a workaround for bug bsc#1141962, which was caused by different shortcuts for
+        # patch_sle and scc_register for local smt scenario. So we add IN_PATCH_SLE check for this.
+        send_key "alt-l" if is_sle('>=15');
+        if (is_sle('12-sp2+') && is_sle('<15') && (get_var('UPGRADE') || get_var('ONLINE_MIGRATION'))
+            && check_var('IN_PATCH_SLE', '1')) {
             send_key "alt-l";
         }
         else {
@@ -710,32 +875,10 @@ sub rename_scc_addons {
     );
     my @addons_new = ();
 
-    for my $a (split(/,/, get_var('SCC_ADDONS'))) {
-        push @addons_new, defined $addons_map{$a} ? $addons_map{$a} : $a;
+    for my $i (split(/,/, get_var('SCC_ADDONS'))) {
+        push @addons_new, defined $addons_map{$i} ? $addons_map{$i} : $i;
     }
     set_var('SCC_ADDONS', join(',', @addons_new));
-}
-
-sub install_docker_when_needed {
-    if (is_caasp) {
-        # Docker should be pre-installed in MicroOS
-        die 'Docker is not pre-installed.' if zypper_call('se -x --provides -i docker');
-    }
-    else {
-        if (is_sle('<15')) {
-            assert_script_run('zypper se docker || zypper -n ar -f http://download.suse.de/ibs/SUSE:/SLE-12:/Update/standard/SUSE:SLE-12:Update.repo');
-        }
-        elsif (is_sle) {
-            add_suseconnect_product('sle-module-containers');
-        }
-        # docker package can be installed
-        zypper_call('in docker');
-    }
-
-    # docker daemon can be started
-    systemctl('start docker');
-    systemctl('status docker');
-    assert_script_run('docker info');
 }
 
 sub verify_scc {

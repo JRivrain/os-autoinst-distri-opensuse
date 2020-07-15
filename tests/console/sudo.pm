@@ -50,8 +50,8 @@ sub run {
     my $test_password = 'Sud0_t3st';
     select_console 'root-console';
     zypper_call 'in sudo expect';
-    # set drop_caches to 1 for later IO redirection test
-    assert_script_run 'echo 1 >/proc/sys/vm/drop_caches';
+    # Prepare a file with content '1' for later IO redirection test
+    assert_script_run 'echo 1 >/run/openqa_sudo_test';
     # prepare sudoers and test user
     assert_script_run 'echo "bernhard ALL = (root) NOPASSWD: /usr/bin/journalctl, /usr/bin/dd, /usr/bin/cat, PASSWD: /usr/bin/zypper, /usr/bin/su" >/etc/sudoers.d/test';
     # use script_run because yes is still writing to the pipe and then command is exiting with 141
@@ -61,29 +61,25 @@ sub run {
     # single command
     assert_script_run 'id -un|grep ^bernhard';
     sudo_with_pw 'sudo id -un', grep => '^root';
-    # I/O redirection
-    sudo_with_pw 'sudo echo 2 >/proc/sys/vm/drop_caches';
-    assert_script_run 'grep 1 /proc/sys/vm/drop_caches';
+    # I/O redirection; the redirection happens as user, not in sudo context, so should fail
+    sudo_with_pw 'sudo echo 2 >/run/openqa_sudo_test';
+    # confirm that the I/O redirection above indeed did not write to the file
+    assert_script_run 'grep 1 /run/openqa_sudo_test';
     # fail with permission denied
-    if (is_sle('=12-sp1')) {
-        record_soft_failure 'bsc#1130159';
-    }
-    else {
-        script_run 'sudo cat 2> check_err.log </proc/1/maps';
-        assert_script_run 'grep -i "permission denied" check_err.log';
-    }
-    assert_script_run 'echo 2 | sudo dd of=/proc/sys/vm/drop_caches';
-    assert_script_run 'grep 2 /proc/sys/vm/drop_caches';
+    script_run 'sudo cat 2> check_err.log </proc/1/maps';
+    assert_script_run 'grep -i "permission denied" check_err.log';
+    assert_script_run 'echo 3 | sudo dd of=/run/openqa_sudo_test';
+    assert_script_run 'grep 3 /run/openqa_sudo_test';
     assert_script_run 'sudo dd if=/proc/1/maps|cat|grep lib';
     # starting shell
     sudo_with_pw 'sudo -i';
     assert_script_run 'whoami|grep ^root';
     assert_script_run 'pwd|grep /root';
-    type_string "exit\n";
+    type_string "exit\n", wait_still_screen => 3;
     sudo_with_pw 'sudo -s';
     assert_script_run 'whoami|grep ^root';
     assert_script_run 'pwd|grep /home/bernhard';
-    type_string "exit\n";
+    type_string "exit\n", wait_still_screen => 3;
     # environment variables
     assert_script_run 'ENVVAR=test132 env | grep ENVVAR=test132';
     sudo_with_pw 'sudo env', grep => '-v ENVVAR=test132', env => 'ENVVAR test132';
@@ -95,7 +91,7 @@ sub run {
     test_sudoers $test_password;
     sudo_with_pw 'bash -c "sudo su - sudo_test 2>check_err.log"', password => "$test_password";
     assert_script_run 'grep -i "not allowed" check_err.log';
-    type_string "exit\n";
+    type_string "exit\n", wait_still_screen => 3;
 }
 
 sub post_run_hook {

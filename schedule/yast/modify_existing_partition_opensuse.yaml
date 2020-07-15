@@ -1,0 +1,29 @@
+name:           modify_existing_partition_opensuse
+description:    >
+  Installation where we modify some pre-existing partitions. Must depend on some create_hdd test suite.
+
+schedule:
+  - installation/isosize
+  - installation/bootloader_start
+  - installation/welcome
+  - installation/online_repos
+  - installation/installation_mode
+  - installation/logpackages
+  - installation/system_role
+  - installation/partitioning
+  - installation/partitioning/modify_existing_partition
+  - installation/installer_timezone
+  - installation/user_settings
+  - installation/resolve_dependency_issues
+  - installation/installation_overview
+  - installation/disable_grub_timeout
+  - installation/start_install
+  - installation/await_install
+  - installation/logs_from_installation_system
+  - installation/reboot_after_installation
+  - installation/grub_test
+  - installation/first_boot
+  - console/validate_modify_existing_partition
+
+test_data:
+  <<: !include test_data/yast/modify_existing_partition/modify_existing_partition.yaml

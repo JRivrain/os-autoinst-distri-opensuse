@@ -8,6 +8,10 @@
 # without any warranty.
 #
 # Summary: Partially dump /sys and /proc
+# - Download test script from "https://raw.githubusercontent.com/richiejp/ltp/dump/scripts/proc_sys_dump.sh"
+# - Make executable and create a temp dir
+# - Run test script
+# - Upload logs
 # Maintainer: Richard Palethorpe <rpalethorpe@suse.com>
 
 use 5.018;
@@ -15,22 +19,22 @@ use warnings;
 use base 'opensusebasetest';
 use testapi qw(is_serial_terminal :DEFAULT);
 use utils;
-use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC);
-use File::Basename 'basename';
-use JSON;
 use serial_terminal;
 require bmwqemu;
+use Utils::Architectures 'is_aarch64';
 
 sub run {
-    my ($self)     = @_;
-    my $tar_dir    = '/tmp/proc_sys_dump/';
-    my $tar        = $tar_dir . 'tar.xz';
-    my $ps_dump    = 'proc_sys_dump.sh';
-    my $white_list = '~/proc_sys_whitelist.txt';
+    my ($self)         = @_;
+    my $tar_dir        = '/tmp/proc_sys_dump/';
+    my $tar            = $tar_dir . 'tar.xz';
+    my $ps_dump        = 'proc_sys_dump.sh';
+    my $white_list     = '~/proc_sys_whitelist.txt';
     my $use_white_list = check_var('PROC_SYS_USE_WHITELIST', 1);
     my $wl_opt  = $use_white_list ? 'u' : 'w';
     my $timeout = $use_white_list ? 120 : 300;
-    my $script_url = "https://raw.githubusercontent.com/richiejp/ltp/dump/scripts/$ps_dump";
+    my $script_url = data_url("ltp/$ps_dump");
+
+    $timeout *= 2 if is_aarch64;
 
     assert_script_run("curl -sS -o /tmp/$ps_dump $script_url");
     assert_script_run("chmod u+x /tmp/$ps_dump", timeout => 300);

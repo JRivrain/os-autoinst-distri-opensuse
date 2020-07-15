@@ -9,6 +9,11 @@
 # without any warranty.
 
 # Summary: Handle grub menu after reboot
+# - Handle grub2 to boot from hard disk (opposed to installation)
+# - Handle passphrase for encrypted disks
+# - Handle booting of snapshot or XEN, acconding to BOOT_TO_SNAPSHOT or XEN
+# - Enable plymouth debug if product if GRUB_KERNEL_OPTION_APPEND is set,
+# or product is sle, aarch64 and PLYMOUTH_DEBUG is set
 # Tags: poo#9716, poo#10286, poo#10164
 # Maintainer: Martin Kravec <mkravec@suse.com>
 
@@ -17,7 +22,7 @@ use warnings;
 use base "opensusebasetest";
 use testapi;
 use utils;
-use version_utils 'is_sle';
+use version_utils qw(is_sle is_livecd);
 use bootloader_setup qw(stop_grub_timeout boot_into_snapshot);
 
 =head2 handle_installer_medium_bootup
@@ -28,13 +33,15 @@ sub handle_installer_medium_bootup {
     my ($self) = @_;
 
     return unless (check_var("BOOTFROM", "d") || (get_var('UEFI') && get_var('USBBOOT')));
-    assert_screen 'inst-bootmenu';
+    assert_screen 'inst-bootmenu', 180;
 
     if (check_var("BOOTFROM", "d") && check_var("AUTOUPGRADE") && check_var("PATCH")) {
         assert_screen 'grub2';
     }
 
-    send_key_until_needlematch 'inst-bootmenu-boot-harddisk', 'up';
+    # Layout of live is different from installation media
+    my $key = is_livecd() ? 'down' : 'up';
+    send_key_until_needlematch 'inst-bootmenu-boot-harddisk', $key;
     send_key 'ret';
 
     # use firmware boot manager of aarch64 to boot upgraded system
@@ -68,11 +75,9 @@ sub run {
     workaround_type_encrypted_passphrase;
     # 60 due to rare slowness e.g. multipath poo#11908
     # 90 as a workaround due to the qemu backend fallout
-    # If grub timeout was not disabled, we wait for linux-login instead
-    my $tag = get_var('KEEP_GRUB_TIMEOUT') ? 'linux-login' : 'grub2';
-    assert_screen_with_soft_timeout($tag, timeout => 2 * $timeout, soft_timeout => $timeout, bugref => 'boo#1120256');
+    assert_screen_with_soft_timeout('grub2', timeout => 2 * $timeout, soft_timeout => $timeout, bugref => 'boo#1120256');
     stop_grub_timeout;
-    boot_into_snapshot if get_var("BOOT_TO_SNAPSHOT");
+    boot_into_snapshot                                               if get_var("BOOT_TO_SNAPSHOT");
     send_key_until_needlematch("bootmenu-xen-kernel", 'down', 10, 5) if get_var('XEN');
     if ((check_var('ARCH', 'aarch64') && is_sle && get_var('PLYMOUTH_DEBUG'))
         || get_var('GRUB_KERNEL_OPTION_APPEND'))

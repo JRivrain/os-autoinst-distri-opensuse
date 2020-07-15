@@ -14,6 +14,7 @@
 package publiccloud::azure;
 use Mojo::Base 'publiccloud::provider';
 use Mojo::JSON qw(decode_json encode_json);
+use Term::ANSIColor 2.01 'colorstrip';
 use Data::Dumper;
 use testapi;
 
@@ -24,11 +25,25 @@ has storage_account => 'openqa';
 has container       => 'sle-images';
 has lease_id        => undef;
 
+=head2 decode_azure_json
+
+    my $json_obj = decode_azure_json($str);
+
+Helper function to decode json string, retrieved from C<az>, into a json
+object.
+Due to https://github.com/Azure/azure-cli/issues/9903 we need to strip all
+color codes from that string first.
+=cut
+sub decode_azure_json {
+    return decode_json(colorstrip(shift));
+}
+
 sub init {
     my ($self) = @_;
     $self->SUPER::init();
     $self->vault_create_credentials() unless ($self->key_id);
     $self->az_login();
+    assert_script_run("az account set --subscription " . $self->subscription);
     assert_script_run("export ARM_SUBSCRIPTION_ID=" . $self->subscription);
     assert_script_run("export ARM_CLIENT_ID=" . $self->key_id);
     assert_script_run("export ARM_CLIENT_SECRET=" . $self->key_secret);
@@ -38,29 +53,25 @@ sub init {
 }
 
 sub az_login {
-    my ($self)    = @_;
-    my $max_tries = 3;
-    my $login_cmd = sprintf('az login --service-principal -u %s -p %s -t %s',
+    my ($self) = @_;
+    my $login_cmd = sprintf(q(while ! az login --service-principal -u '%s' -p '%s' -t '%s'; do sleep 10; done),
         $self->key_id, $self->key_secret, $self->tenantid);
-
-    for (1 .. $max_tries) {
-        my $ret = script_run($login_cmd);
-        return 1 if (defined($ret) && $ret == 0);
-        sleep 30;
-    }
-    die("Azure login failed!");
+    assert_script_run($login_cmd, timeout => 5 * 60);
+    #Azure infra need some time to propagate given by Vault credentials
+    # Running some verification command does not prove anything because
+    # at the beginning failures can happening sporadically
+    sleep(get_var('AZURE_LOGIN_WAIT_SECONDS', 0));
 }
 
 sub vault_create_credentials {
     my ($self) = @_;
 
     record_info('INFO', 'Get credentials from VAULT server.');
-    my $res = $self->vault_api('/v1/azure/creds/openqa-role', method => 'get');
-    $self->vault_lease_id($res->{lease_id});
-    $self->key_id($res->{data}->{client_id});
-    $self->key_secret($res->{data}->{client_secret});
+    my $data = $self->vault_get_secrets('/azure/creds/openqa-role');
+    $self->key_id($data->{client_id});
+    $self->key_secret($data->{client_secret});
 
-    $res = $self->vault_api('/v1/secret/azure/openqa-role', method => 'get');
+    my $res = $self->vault_api('/v1/' . get_var('PUBLIC_CLOUD_VAULT_NAMESPACE', '') . '/secret/azure/openqa-role', method => 'get');
     $self->tenantid($res->{data}->{tenant_id});
     $self->subscription($res->{data}->{subscription_id});
 
@@ -85,17 +96,19 @@ sub find_img {
     $name =~ s/\.vhdfixed$/.vhd/;
     my $json = script_output("az image show --resource-group " . $self->resource_group . " --name $name", 60, proceed_on_failure => 1);
     record_info('INFO', $json);
+    my $image;
     eval {
-        my $image = decode_json($json);
-        return $image->{name};
+        $image = decode_azure_json($json)->{name};
     };
+    record_info('INFO', "Cannot find image $name. Need to upload it.\n$@") if ($@);
+    return $image;
 }
 
 sub get_storage_account_keys {
     my ($self, %args) = @_;
     my $output = script_output("az storage account keys list --resource-group "
           . $self->resource_group . " --account-name " . $self->storage_account);
-    my $json = decode_json($output);
+    my $json = decode_azure_json($output);
     my $key  = undef;
     if (@{$json} > 0) {
         $key = $json->[0]->{value};
@@ -148,7 +161,7 @@ sub upload_img {
     return $img_name;
 }
 
-sub ipa {
+sub img_proof {
     my ($self, %args) = @_;
 
     my $credentials_file = 'azure_credentials.txt';
@@ -173,17 +186,29 @@ sub ipa {
     $args{user}          //= 'azureuser';
     $args{provider}      //= 'azure';
 
-    return $self->run_ipa(%args);
+    if (my $parsed_id = $self->parse_instance_id($args{instance})) {
+        $args{running_instance_id} = $parsed_id->{vm_name};
+    }
+
+    return $self->run_img_proof(%args);
 }
 
-sub on_terraform_timeout {
+sub on_terraform_apply_timeout {
     my ($self) = @_;
-    my $out = script_output('terraform state show azurerm_resource_group.openqa-group');
-    if ($out !~ /name\s+=\s+(openqa-[a-z0-9]+)/m) {
-        record_info('ERROR', 'Unable to get resource-group:' . $/ . $out, result => 'fail');
+    my $resgroup;
+    my $out = script_output('terraform show -json');
+    eval {
+        my $json = decode_azure_json($out);
+        for my $resource (@{$json->{values}->{root_module}->{resources}}) {
+            next unless ($resource->{type} eq 'azurerm_resource_group');
+            $resgroup = $resource->{values}->{name};
+            last;
+        }
+    };
+    if ($@ || !defined($resgroup)) {
+        record_info('ERROR', "Unable to get resource-group:\n$out", result => 'fail');
         return;
     }
-    my $resgroup = $1;
 
     my $tries = 3;
     while ($tries gt 0) {
@@ -202,7 +227,83 @@ sub on_terraform_timeout {
         }
     }
 
+    assert_script_run("az group delete --yes --no-wait --name $resgroup") unless get_var('PUBLIC_CLOUD_NO_CLEANUP_ON_FAILURE');
+}
+
+sub on_terraform_destroy_timeout {
+    my ($self) = @_;
+    my $out = script_output('terraform state show azurerm_resource_group.openqa-group');
+    if ($out !~ /name\s+=\s+(openqa-[a-z0-9]+)/m) {
+        record_info('ERROR', 'Unable to get resource-group:' . $/ . $out, result => 'fail');
+        return;
+    }
+    my $resgroup = $1;
     assert_script_run("az group delete --yes --no-wait --name $resgroup");
+}
+
+sub get_state_from_instance
+{
+    my ($self, $instance) = @_;
+    my $id  = $instance->instance_id();
+    my $out = decode_azure_json(script_output("az vm get-instance-view --ids '$id' --query instanceView.statuses[1] --output json", quiet => 1));
+    die("Expect PowerState but got " . $out->{code}) unless ($out->{code} =~ m'PowerState/(.+)$');
+    return $1;
+}
+
+sub get_ip_from_instance
+{
+    my ($self, $instance) = @_;
+    my $id = $instance->instance_id();
+
+    my $out = decode_azure_json(script_output("az vm list-ip-addresses --ids '$id'", quiet => 1));
+    return $out->[0]->{virtualMachine}->{network}->{publicIpAddresses}->[0]->{ipAddress};
+}
+
+sub stop_instance
+{
+    my ($self, $instance) = @_;
+    # We assume that the instance_id on azure is actually the name
+    # which is equal to the resource group
+    # TODO maybe we need to change the azure.tf file to retrieve the id instead of the name
+    my $id       = $instance->instance_id();
+    my $attempts = 60;
+
+    die('Outdated instance object') if ($self->get_ip_from_instance($instance) ne $instance->public_ip);
+
+    assert_script_run("az vm stop --ids '$id'", quiet => 1);
+    while ($self->get_state_from_instance($instance) ne 'stopped' && $attempts-- > 0) {
+        sleep 5;
+    }
+    die("Failed to stop instance $id") unless ($attempts > 0);
+}
+
+sub start_instance
+{
+    my ($self, $instance, %args) = @_;
+    my $id = $instance->instance_id();
+
+    die("Try to start a running instance") if ($self->get_state_from_instance($instance) ne 'stopped');
+
+    assert_script_run("az vm start --ids '$id'", quiet => 1);
+    $instance->public_ip($self->get_ip_from_instance($instance));
+}
+
+=head2
+  my $parsed_id = $self->parse_instance_id($instance);
+  say $parsed_id->{vm_name};
+  say $parsed_id->{resource_group};
+
+Extract resource group and vm name from full instance id which looks like
+C</subscriptions/c011786b-59d7-4817-880c-7cd8a6ca4b19/resourceGroups/openqa-suse-de-1ec3f5a05b7c0712/providers/Microsoft.Compute/virtualMachines/openqa-suse-de-1ec3f5a05b7c0712>
+=cut
+sub parse_instance_id
+{
+    my ($self, $instance) = @_;
+
+    if ($instance->instance_id() =~ m'/subscriptions/([^/]+)/resourceGroups/([^/]+)/.+/virtualMachines/(.+)$') {
+        return {subscription => $1, resource_group => $2, vm_name => $3};
+    }
+    return;
 }
 
 1;

@@ -8,6 +8,9 @@
 # without any warranty.
 
 # Summary: Login and reboot a kiwi image
+# - at login screen, type user and password
+# - after login, reboots machine
+# - makes sure image rebooted and is at login screen again
 # Maintainer: Ednilson Miura <emiura@suse.com>
 
 use base "installbasetest";
@@ -15,7 +18,6 @@ use strict;
 use warnings;
 use testapi;
 use utils;
-use version_utils "is_sle";
 
 sub run {
     # login
@@ -30,6 +32,6 @@ sub run {
     send_key 'up';
     assert_screen('kiwi_boot', 120);
     send_key 'ret';
-    assert_screen('kiwi_login', 120);
+    assert_screen('linux-login', 120);
 }
 1;

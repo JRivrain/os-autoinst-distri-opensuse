@@ -17,15 +17,22 @@ use Exporter;
 
 use testapi;
 use utils;
+use List::Util 'max';
+use version_utils 'is_sle';
 
 our @EXPORT
   = qw(capture_state check_automounter is_patch_needed add_test_repositories ssh_add_test_repositories remove_test_repositories advance_installer_window get_patches check_patch_variables);
 
+use constant ZYPPER_PACKAGE_COL    => 1;
+use constant OLD_ZYPPER_STATUS_COL => 4;
+use constant ZYPPER_STATUS_COL     => 5;
+
 sub capture_state {
     my ($state, $y2logs) = @_;
     if ($y2logs) {    #save y2logs if needed
-        assert_script_run "save_y2logs /tmp/y2logs_$state.tar.bz2";
-        upload_logs "/tmp/y2logs_$state.tar.bz2";
+        my $compression = is_sle('=12-sp1') ? 'bz2' : 'xz';
+        assert_script_run "save_y2logs /tmp/y2logs_$state.tar.$compression";
+        upload_logs "/tmp/y2logs_$state.tar.$compression";
         save_screenshot();
     }
     #upload ip status
@@ -39,7 +46,7 @@ sub capture_state {
     script_run("dmesg > /tmp/dmesg_$state.log");
     upload_logs("/tmp/dmesg_$state.log");
     #upload journal
-    script_run("journalctl -b > /tmp/journal_$state.log");
+    script_run("journalctl -b -o short-precise > /tmp/journal_$state.log");
     upload_logs("/tmp/journal_$state.log");
 }
 
@@ -81,12 +88,12 @@ sub add_test_repositories {
     @repos = split(',', $oldrepo) if ($oldrepo);
 
     for my $var (@repos) {
-        zypper_call("--no-gpg-check ar -f -n 'TEST_$counter' $var 'TEST_$counter'");
+        zypper_call("--no-gpg-checks ar -f -n 'TEST_$counter' $var 'TEST_$counter'");
         $counter++;
     }
     # refresh repositories, inf 106 is accepted because repositories with test
     # can be removed before test start
-    zypper_call('ref', exitcode => [0, 106]);
+    zypper_call('ref', timeout => 1400, exitcode => [0, 106]);
 }
 
 # Function that will add all test repos to SSH guest
@@ -102,7 +109,7 @@ sub ssh_add_test_repositories {
     @repos = split(',', $oldrepo) if ($oldrepo);
 
     for my $var (@repos) {
-        assert_script_run("ssh root\@$host 'zypper -n --no-gpg-check ar -f -n TEST_$counter $var TEST_$counter'");
+        assert_script_run("ssh root\@$host 'zypper -n --no-gpg-checks ar -f -n TEST_$counter $var TEST_$counter'");
         $counter++;
     }
     # refresh repositories, inf 106 is accepted because repositories with test
@@ -122,7 +129,12 @@ sub advance_installer_window {
     my ($screenName) = @_;
 
     send_key $cmd{next};
-    assert_screen $screenName;
+    die 'Unable to create repository' if check_screen('unable-to-create-repo', 5);
+    unless (check_screen "$screenName", 60) {
+        my $key = check_screen('cannot-access-installation-media') ? "alt-y" : "$cmd{next}";
+        send_key_until_needlematch $screenName, $key, 5, 60;
+        record_soft_failure 'Retry most probably due to network problems poo#52319 or failed next click';
+    }
 }
 
 # Get list of patches
@@ -133,10 +145,23 @@ sub get_patches {
     $repo =~ tr/,/ /;
 
     # Search for patches by incident, exclude not needed
-    my $patches = script_output("zypper patches -r $repo | awk -F '|' '/[Nn]eeded/ && !/[Nn]ot [Nn]eeded/ && /$incident_id/ { printf \$2 }'");
-    # Remove carriage returns and make patch list on one line
-    $patches =~ s/\r//g;
-    return $patches;
+    my $patches = script_output("zypper patches -r $repo");
+    my @patch_list;
+    my $status_col = ZYPPER_STATUS_COL;
+
+    if (is_sle('<12-SP2')) {
+        $status_col = OLD_ZYPPER_STATUS_COL;
+    }
+
+    for my $line (split /\n/, $patches) {
+        my @tokens = split /\s*\|\s*/, $line;
+        next if $#tokens < max(ZYPPER_PACKAGE_COL, $status_col);
+        my $packname = $tokens[ZYPPER_PACKAGE_COL];
+        push @patch_list, $packname if $packname =~ m/$incident_id/ &&
+          'needed' eq lc $tokens[$status_col];
+    }
+
+    return join(' ', @patch_list);
 }
 
 # Check variables for patch definition

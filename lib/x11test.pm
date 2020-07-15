@@ -1,3 +1,13 @@
+# SUSE's openQA tests
+#
+# Copyright © 2009-2013 Bernhard M. Wiedemann
+# Copyright © 2012-2020 SUSE LLC
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.  This file is offered as-is,
+# without any warranty.
+
 ## no critic (RequireFilenameMatchesPackage);
 package x11test;
 use base "opensusebasetest";
@@ -8,21 +18,23 @@ use testapi;
 use LWP::Simple;
 use Config::Tiny;
 use utils;
-use version_utils qw(is_sle is_tumbleweed);
+use version_utils qw(is_sle is_leap is_tumbleweed);
 use POSIX 'strftime';
-
-sub post_fail_hook {
-    my ($self) = shift;
-    $self->export_logs;
-    $self->SUPER::post_fail_hook;
-
-    save_screenshot;
-}
+use mm_network;
 
 sub post_run_hook {
     my ($self) = @_;
 
-    assert_screen('generic-desktop');
+    assert_screen('generic-desktop') unless match_has_tag('generic-desktop');
+}
+
+sub dm_login {
+    assert_screen('displaymanager', 60);
+    # The keyboard focus was losing in gdm of SLE15 bgo#657996
+    mouse_set(520, 350) if is_sle('15+');
+    send_key('ret');
+    assert_screen('originUser-login-dm');
+    type_password;
 }
 
 # logout and switch window-manager
@@ -34,12 +46,7 @@ sub switch_wm {
     assert_screen "logout-dialogue";
     send_key 'tab' if is_sle('15+');
     send_key "ret";
-    assert_screen "displaymanager";
-    # The keyboard focus was losing in gdm of SLE15 bgo#657996
-    mouse_set(520, 350) if is_sle('15+');
-    send_key "ret";
-    assert_screen "originUser-login-dm";
-    type_password;
+    dm_login;
 }
 
 # shared between gnome_class_switch and gdm_session_switch
@@ -52,7 +59,7 @@ sub prepare_sle_classic {
     assert_and_click "displaymanager-settings";
     assert_and_click "dm-gnome-classic";
     send_key "ret";
-    assert_screen "desktop-gnome-classic", 120;
+    assert_screen "desktop-gnome-classic", 350;
     $self->application_test;
 
     # Log out and switch back to default session
@@ -61,12 +68,12 @@ sub prepare_sle_classic {
     if (is_sle('15+')) {
         assert_and_click 'dm-gnome-shell';
         send_key 'ret';
-        assert_screen 'desktop-gnome-shell', 120;
+        assert_screen 'desktop-gnome-shell', 350;
     }
     else {
         assert_and_click 'dm-sle-classic';
         send_key 'ret';
-        assert_screen 'desktop-sle-classic', 120;
+        assert_screen 'desktop-sle-classic', 350;
     }
 }
 
@@ -205,6 +212,26 @@ imapport =993
 recvServer = localhost
 sendServer = localhost
 sendport =25
+
+[internal_account_C]
+user =admin
+mailbox =admin@server
+passwd =password123
+recvport =995
+imapport =993
+recvServer =10.0.2.101
+sendServer =10.0.2.101
+sendport =25
+
+[internal_account_D]
+user =nimda
+mailbox =nimda@server
+passwd =password123
+recvport =995
+imapport =993
+recvServer =10.0.2.101
+sendServer =10.0.2.101
+sendport =25
 END_LOCAL_CONFIG
 
     my $config = Config::Tiny->new;
@@ -222,41 +249,36 @@ sub check_new_mail_evolution {
     my $config      = $self->getconfig_emailaccount;
     my $mail_passwd = $config->{$i}->{passwd};
     assert_screen "evolution_mail-online", 240;
-    assert_and_click "evolution-send-receive";
-    if (check_screen "evolution_mail-auth", 30) {
-        if (is_sle('12-SP2+')) {
-            send_key "alt-p";
-        }
+    send_key 'f12';
+    wait_still_screen(2);
+    assert_and_click('evolution_mail-auth-unfocused') if check_screen('evolution_mail-auth-unfocused', 2);
+    assert_screen ['evolution_mail-auth', 'evolution_mail-max-window'];
+    if (match_has_tag "evolution_mail-auth") {
+        send_key "alt-a";    #disable keyring option
+        send_key "alt-p";
         type_password $mail_passwd;
         send_key "ret";
         assert_screen "evolution_mail-max-window";
     }
     send_key "alt-w";
     send_key "ret";
-    wait_still_screen 3;
-    send_key_until_needlematch "evolution_mail_show-all", "down", 5, 3;
+    wait_still_screen 2;
+    send_key_until_needlematch "evolution_mail_show-all", "down", 5, 1;
     send_key "ret";
+    wait_still_screen(2);
     send_key "alt-n";
     send_key "ret";
-    send_key_until_needlematch "evolution_mail_show-allcount", "down", 5, 3;
+    send_key_until_needlematch "evolution_mail_show-allcount", "down", 5, 1;
     send_key "ret";
     send_key "alt-c";
     type_string "$mail_search";
+    wait_still_screen(2);
     send_key "ret";
     assert_and_click "evolution_meeting-view-new";
     send_key "ret";
     assert_screen "evolution_mail_open_mail";
     send_key "ctrl-w";    # close the mail
     save_screenshot();
-
-    # Delete the message and expunge the deleted item if not used POP3
-    if ($protocol != "POP") {
-        send_key "ctrl-e";
-        if (check_screen "evolution_mail-expunge", 30) {
-            send_key "alt-e";
-        }
-        assert_screen "evolution_mail-ready";
-    }
 }
 
 # get a random string with followed by date, it used in evolution case to get a unique email title.
@@ -280,10 +302,7 @@ sub send_meeting_request {
     wait_screen_change { send_key 'alt-a' };
     wait_still_screen;
     type_string "$mail_box";
-    send_key "alt-s";
-    if (is_sle('12-SP2+')) {
-        send_key "alt-s";    #only need in sp2
-    }
+    assert_and_click "evolution_meeting-Summary";
     type_string "$mail_subject this is a evolution test meeting";
     send_key "alt-l";
     type_string "the location of this meetinng is conference room";
@@ -291,16 +310,26 @@ sub send_meeting_request {
     send_key "ctrl-s";
     assert_screen "evolution_mail-sendinvite_meeting", 60;
     send_key "ret";
-    if (check_screen "evolution_mail-auth", 30) {
-        if (is_sle('12-SP2+')) {
-            send_key "alt-a";    #disable keyring option, only need in SP2 or later
-            send_key "alt-p";
-        }
+    wait_still_screen(2, 2);
+    assert_screen 'evolution_mail-auth';
+    send_key "alt-a";    #disable keyring option
+    send_key "alt-p";
+    type_password $mail_passwd;
+    wait_still_screen(2, 2);
+    send_key "ret";
+    if (check_screen "evolution_mail-compse_meeting", 5) {
+        send_key "ctrl-w";
+    }
+    wait_still_screen(2);
+    send_key 'f12';
+    if (check_screen 'evolution_mail-auth', 3) {
+        assert_and_click('evolution_mail-auth-unfocused') if check_screen('evolution_mail-auth-unfocused', 5);
+        send_key "alt-a";    #disable keyring option
+        send_key "alt-p";
         type_password $mail_passwd;
+        wait_still_screen(2, 2);
         send_key "ret";
     }
-    assert_screen "evolution_mail-compse_meeting", 60;
-    send_key "ctrl-w";
     assert_screen [qw(evolution_mail-save_meeting_dialog evolution_mail-send_meeting_dialog evolution_mail-meeting_error_handle evolution_mail-max-window)];
     if (match_has_tag "evolution_mail-save_meeting_dialog") {
         send_key "ret";
@@ -324,55 +353,75 @@ sub setup_imap {
 }
 
 sub start_evolution {
-    my ($self, $mail_box) = @_;
+    # This function removes any previous Evolution configuration, and goes through the first-run config wizard.
 
-    $self->{next} = "alt-o";
-    if (is_sle('12-SP2+')) {
-        $self->{next} = "alt-n";
-    }
+    # Test setup
+    my ($self, $mail_box) = @_;
     mouse_hide(1);
-    # Clean and Start Evolution
+
+    # Cleanup past configs  and start Evolution.
     x11_start_program("xterm -e \"killall -9 evolution; find ~ -name evolution | xargs rm -rf;\"", valid => 0);
-    x11_start_program('evolution', target_match => [qw(evolution-default-client-ask test-evolution-1)]);
-    # Follow the wizard to setup mail account
+    x11_start_program('evolution', target_match => [qw(evolution-default-client-ask test-evolution-1 evolution-welcome-not_focused)]);
+    # Follow the wizard to setup mail account.
     if (match_has_tag 'evolution-default-client-ask') {
         assert_and_click "evolution-default-client-agree";
         assert_screen "test-evolution-1";
     }
-    send_key $self->{next};
-    assert_screen "evolution_wizard-restore-backup";
-    send_key $self->{next};
-    assert_screen "evolution_wizard-identity";
-    wait_screen_change {
-        send_key "alt-e";
-    };
-    type_string "SUSE Test";
-    wait_screen_change {
-        send_key "alt-a";
-    };
-    wait_screen_change { type_string "$mail_box" };
-    save_screenshot();
+    elsif (match_has_tag "evolution-welcome-not_focused") {
+        assert_and_click "evolution-welcome-not_focused";
+    }
+    # Μake sure the welcome window is maximized and click next.
+    send_key "super-up";
+    assert_and_click("evolution_welcome-max-window-click");
+    # Don't restore from backup and click next.
+    assert_and_click("evolution_wizard-restore-backup-click");
 
-    send_key $self->{next};
+    # Move to "Full Name" field and fill it.
+    send_key "alt-e";
+    wait_still_screen(2);
+    type_string "SUSE Test";
+    wait_still_screen(2, 2);
+    # Move to "Email Address" field and fill it.
+    send_key "alt-a";
+    type_string_slow "$mail_box";
+    wait_still_screen(2, 2);
+    save_screenshot();
+    send_key 'alt-n';
+    if ($mail_box eq 'nooops_test3@aim.com') {
+        assert_screen [qw(evolution_wizard-account-summary evolution_wizard-receiving)];
+        if (match_has_tag 'evolution_wizard-account-summary') {
+            record_info 'found', "$mail_box details resolved";
+            assert_and_click "evolution-option-next";
+            assert_screen 'evolution_wizard-done';
+            send_key 'alt-a';
+            wait_still_screen(1);
+            send_key 'alt-n';
+        }
+        else {
+            record_soft_failure 'poo#67408';
+            send_key 'alt-c';
+        }
+    }
+    else {
+        assert_screen 'evolution_wizard-receiving';
+    }
+    wait_still_screen(2);
 }
 
 sub evolution_add_self_signed_ca {
     my ($self, $account) = @_;
     # add self-signed CA with internal account
     if ($account =~ m/internal/) {
-        assert_and_click "evolution_wizard-receiving-checkauthtype";
-        assert_screen "evolution_mail_meeting_trust_ca";
-        send_key "alt-a";
-        wait_screen_change {
-            send_key $self->{next};
-            send_key "ret";
-        }
+        assert_and_click 'evolution_wizard-receiving-checkauthtype';
+        assert_screen 'evolution_mail_meeting_trust_ca';
+        send_key 'alt-a';
+        assert_and_click 'evolution_wizard-receiving';
+        send_key $cmd{next};    # select "Next" key
+        wait_still_screen(2);
+        send_key 'ret';         # Go to next page (previous key just selected the key)
     }
     else {
-        send_key $self->{next};
-    }
-    if (is_sle('12-SP2+')) {
-        send_key "ret";    #only need in SP2 or later
+        send_key $cmd{next};
     }
 }
 
@@ -390,126 +439,91 @@ sub setup_mail_account {
     my $mail_recvport   = $config->{$account}->{$port_key};
 
     $self->start_evolution($mail_box);
-    if (check_screen "evolution_wizard-skip-lookup", 30) {
-        send_key "alt-s";
-    }
-
-    assert_screen "evolution_wizard-receiving";
-    wait_screen_change {
-        send_key "alt-t";
-    };
-    send_key "ret";
-    send_key_until_needlematch "evolution_wizard-receiving-$proto", "down", 10, 3;
-    wait_screen_change {
-        send_key "ret";
-    };
-    wait_screen_change {
-        send_key "alt-s";
-    };
+    # Open Server Type screen.
+    send_key "alt-t";
+    wait_still_screen(1);
+    send_key_until_needlematch "evolution_wizard-receiving-$proto", "down", 10, 1;
+    send_key "alt-s";
+    wait_still_screen(1);
     type_string "$mail_recvServer";
     if ($proto eq 'pop') {
         #No need set receive port with POP
     }
     elsif ($proto eq 'imap') {
-        wait_screen_change {
-            send_key "alt-p";
-        };
+        send_key "alt-p";
+        wait_still_screen(2, 2);
         type_string "$mail_recvport";
     }
     else {
         die "Unsupported protocol: $proto";
     }
-    wait_screen_change {
-        send_key "alt-n";
-    };
+    send_key "alt-n";
+    wait_still_screen(1);
     type_string "$mail_user";
-    wait_screen_change {
-        send_key "alt-m";
-    };
-    send_key "ret";
-    send_key_until_needlematch "evolution_wizard-receiving-ssl", "down", 5, 3;
-    wait_screen_change {
-        send_key "ret";
-    };
+    send_key "alt-m";
+    wait_still_screen(1);
+    send_key_until_needlematch "evolution_wizard-receiving-ssl", "down", 5, 1;
     $self->evolution_add_self_signed_ca($account);
-    save_screenshot;
-    assert_screen "evolution_wizard-receiving-opts";
-    send_key $self->{next};
-    if (is_sle('12-SP2+')) {
-        send_key "ret";    #only need in SP2 or later
+    assert_screen [qw(evolution_wizard-receiving-opts evolution_wizard-receiving-not-focused)];
+    if (match_has_tag 'evolution_wizard-receiving-not-focused') {
+        record_info('workaround', "evolution window not focused, sending key");
+        assert_and_click "evolution_wizard-receiving-not-focused";
+        if (is_tumbleweed) {
+            assert_and_click "evolution_wizard-receiving-not-focused-next";
+        }
+        else {
+            send_key "ret";
+        }
+        assert_screen "evolution_wizard-receiving-opts";
     }
+    send_key "ret";    #only need in SP2 or later, or tumbleweed
 
     #setup sending protocol as smtp
     assert_screen "evolution_wizard-sending";
-    wait_screen_change {
-        send_key "alt-t";
-    };
-    send_key "ret";
-    save_screenshot;
-    send_key_until_needlematch "evolution_wizard-sending-smtp", "down", 5, 3;
-    wait_screen_change {
-        send_key "ret";
-    };
-    wait_screen_change {
-        send_key "alt-s";
-    };
+    send_key "alt-t";
+    wait_still_screen(2);
+    send_key "home";
+    wait_still_screen(2);
+    send_key_until_needlematch "evolution_wizard-sending-smtp", "down", 5, 1;
+    send_key "alt-s";
     type_string "$mail_sendServer";
-    wait_screen_change {
-        send_key "alt-p";
-    };
+    wait_still_screen(2, 2);
+    send_key "alt-p";
     type_string "$mail_sendport";
-    wait_screen_change {
-        send_key "alt-v";
-    };
-    wait_screen_change {
-        send_key "alt-m";
-    };
-    send_key "ret";
-    send_key_until_needlematch "evolution_wizard-sending-starttls", "down", 5, 3;
-    send_key "ret";
-
-    #Known issue: hot key 'alt-y' doesn't work
-    #wait_screen_change {
-    #   send_key "alt-y";
-    #};
-    #send_key "ret";
-    #send_key_until_needlematch "evolution_wizard-sending-authtype", "down", 5, 3;
-    #send_key "ret";
-    #Workaround of above issue: click the 'Check' button
+    wait_still_screen(2);
+    send_key "alt-v";
+    wait_still_screen(2);
+    send_key "alt-m";
+    wait_still_screen(2);
+    send_key "home";
+    #change to use mail-server and SSL
+    my $encrypt = get_var('QAM_MAIL_EVOLUTION') ? 'TLS' : 'STARTTLS';
+    send_key_until_needlematch "evolution_SSL_wizard-sending-$encrypt", "down", 5, 1;
     assert_and_click "evolution_wizard-sending-setauthtype";
-    send_key_until_needlematch "evolution_wizard-sending-authtype", "down", 5, 3;
-    send_key "ret";
+    assert_and_click "evolution_wizard-sending-setauthtype_login";
     wait_screen_change { send_key 'alt-n' };
     type_string "$mail_user";
-    send_key $self->{next};
-    send_key "ret";
+    assert_and_click("evolution_wizard-sending_username_filled");
     assert_screen "evolution_wizard-account-summary";
-    send_key $self->{next};
-    if (is_sle('12-SP2+')) {
-        send_key "alt-n";    #only in sp2
-        send_key "ret";
-    }
+    send_key $cmd{next};
+    send_key "alt-n";
+    send_key "ret";
     assert_screen "evolution_wizard-done";
     send_key "alt-a";
-    if (check_screen "evolution_mail-auth", 30) {
-        if (is_sle('12-SP2+')) {
-            send_key "alt-a";    #disable keyring option, only in SP2
-            send_key "alt-p";
+    wait_still_screen(2);
+    if (check_screen "evolution_mail-auth", 5) {
+        if (is_sle('15+')) {
+            send_key "alt-a";    #disable keyring option
         }
+        else {
+            assert_and_click("disable_keyring_option");
+        }
+        send_key "alt-p";
         type_password $mail_passwd;
         send_key "ret";
     }
-    if (check_screen "evolution_mail-init-window", 30) {
-        send_key "super-up";
-    }
-    if (check_screen "evolution_mail-auth", 30) {
-        if (is_sle('12-SP2+')) {
-            send_key "alt-p";
-        }
-        type_password $mail_passwd;
-        send_key "ret";
-    }
-    assert_screen "evolution_mail-max-window";
+    # Μake sure the welcome window is maximized
+    send_key_until_needlematch 'evolution_mail-max-window', 'super-up', 3, 3;
 }
 
 # start clean firefox with one suse.com tab, visit pages which trigger pop-up so they will not pop again
@@ -530,7 +544,13 @@ sub start_clean_firefox {
         # workaround for bsc#1046005
         wait_screen_change { assert_and_click 'firefox_titlebar' };
         if (check_screen 'firefox_trackinfo', 3) {
+            record_info 'Tracking protection', 'Track info did show up';
             assert_and_click 'firefox_trackinfo';
+            last;
+        }
+        # the needle match area has to be where trackinfo does pop-up
+        elsif (check_screen 'firefox-developertool-opensuse') {
+            record_info 'Tracking protection', 'Track info pop-up did NOT show up';
             last;
         }
         elsif ($count eq 1) {
@@ -539,6 +559,12 @@ sub start_clean_firefox {
         else {
             send_key 'f5';
         }
+    }
+
+    # get rid of "Firefox Privacy Notice" page
+    wait_still_screen(3);
+    if (check_screen 'firefox_privacy_notice') {
+        assert_and_click 'firefox_privacy_notice';
     }
 
     # get rid of the reader & tracking pop-up once, first test should have milestone flag
@@ -592,10 +618,8 @@ sub restart_firefox {
     $url ||= '/home';
     # exit firefox properly
     wait_still_screen 2;
-    send_key 'alt-f';
-    assert_screen('firefox-menu-quit');
-    send_key 'q';
-    assert_screen 'xterm';
+    $self->exit_firefox_common;
+    assert_script_run('time wait $(pidof firefox)');
     type_string "$cmd\n";
     type_string "firefox $url >>firefox.log 2>&1 &\n";
     $self->firefox_check_default;
@@ -665,9 +689,9 @@ sub firefox_open_url {
     }
 }
 
-sub exit_firefox {
+sub exit_firefox_common {
     # Exit
-    send_key 'alt-f4';
+    send_key 'ctrl-q';
     send_key_until_needlematch([qw(firefox-save-and-quit xterm-left-open xterm-without-focus)], "alt-f4", 3, 30);
     if (match_has_tag 'firefox-save-and-quit') {
         # confirm "save&quit"
@@ -679,6 +703,11 @@ sub exit_firefox {
         assert_and_click 'xterm-without-focus';
         assert_screen 'xterm-left-open';
     }
+}
+
+sub exit_firefox {
+    my ($self) = @_;
+    $self->exit_firefox_common;
     script_run "cat firefox.log";
     save_screenshot;
     upload_logs "firefox.log";
@@ -745,8 +774,7 @@ sub setup_evolution_for_ews {
     assert_screen "test-evolution-1";
     send_key "alt-o";
     assert_screen "evolution_wizard-restore-backup";
-    send_key "alt-o";
-    assert_screen "evolution_wizard-identity";
+    send_key_until_needlematch("evolution_wizard-identity", "alt-o", 10);
     wait_screen_change {
         send_key "alt-e";
     };
@@ -755,6 +783,7 @@ sub setup_evolution_for_ews {
         send_key "alt-a";
     };
     type_string "$mailbox";
+    wait_still_screen(2, 2);
     save_screenshot();
 
     send_key "alt-o";
@@ -764,9 +793,8 @@ sub setup_evolution_for_ews {
         assert_screen 'evolution_wizard-receiving';
     }
 
-    wait_screen_change {
-        send_key "alt-t";
-    };
+    send_key "alt-t";
+    wait_still_screen(1);
     send_key "ret";
     send_key_until_needlematch "evolution_wizard-receiving-ews", "up", 10, 3;
     send_key "ret";
@@ -794,10 +822,6 @@ sub setup_evolution_for_ews {
     assert_screen "evolution_mail-auth";
     type_string "$mail_passwd";
     send_key "ret";
-    if (check_screen "evolution_mail-init-window") {
-        send_key "super-up";
-    }
-    assert_screen "evolution_mail-max-window";
 
     # Make all existing mails as read
     assert_screen "evolution_mail-online", 60;
@@ -819,28 +843,31 @@ sub evolution_send_message {
     my $mail_subject = $self->get_dated_random_string(4);
 
     send_key "shift-ctrl-m";
+    if (check_screen "evolution_mail-auth", 5) {
+        send_key "alt-a";    #disable keyring option
+        send_key "alt-p";
+        type_string "$mail_passwd";
+        wait_still_screen(2, 2);
+        send_key "ret";
+    }
     assert_screen "evolution_mail-compose-message";
     assert_and_click "evolution_mail-message-to";
     type_string "$mailbox";
-    wait_screen_change {
-        send_key "alt-u";
-    };
-    wait_still_screen;
+    wait_still_screen(2, 2);
+    send_key "alt-u";
+    wait_still_screen(1);
     type_string "$mail_subject this is a test mail";
     assert_and_click "evolution_mail-message-body";
     type_string "Test email send and receive.";
     send_key "ctrl-ret";
-    if (is_sle('12-SP2+')) {
-        if (check_screen "evolution_mail_send_mail_dialog", 30) {
-            send_key "ret";
-        }
+    if (check_screen "evolution_mail_send_mail_dialog", 5) {
+        send_key "ret";
     }
-    if (check_screen "evolution_mail-auth", 30) {
-        if (is_sle('12-SP2+')) {
-            send_key "alt-a";    #disable keyring option, only in SP2
-            send_key "alt-p";
-        }
+    if (check_screen "evolution_mail-auth", 5) {
+        send_key "alt-a";    #disable keyring option
+        send_key "alt-p";
         type_string "$mail_passwd";
+        wait_still_screen(2, 2);
         send_key "ret";
     }
 
@@ -910,9 +937,15 @@ sub configure_static_ip_nm {
 
     x11_start_program('xterm');
     become_root;
-    assert_script_run "nmcli connection add type ethernet con-name wired ifname eth0 ip4 '$ip' gw4 10.0.2.2";
-    assert_script_run 'nmcli device disconnect eth0';
-    assert_script_run 'nmcli connection up wired ifname eth0', 60;
+
+    # Dynamic get network interface names
+    my $niName = script_output("ls /sys/class/net | grep ^e", type_command => 1);
+    chomp $niName;
+    configure_default_gateway;
+    assert_script_run "nmcli connection add type ethernet con-name wired ifname '$niName' ip4 '$ip' gw4 10.0.2.2";
+    assert_script_run "nmcli device disconnect '$niName'";
+    assert_script_run "nmcli connection up wired ifname '$niName'";
+    configure_static_dns(get_host_resolv_conf());
     type_string "exit\n";
     wait_screen_change { send_key 'alt-f4' };
 }
@@ -933,6 +966,19 @@ sub configure_xdmcp_firewall {
 
 sub check_desktop_runner {
     x11_start_program('true', target_match => 'generic-desktop', no_wait => 1);
+}
+
+# Start one of the libreoffice components, close any first-run dialogs
+sub libreoffice_start_program {
+    my ($self, $program) = @_;
+    my %start_program_args;
+    $start_program_args{timeout} = 100 if get_var('LIVECD') && check_var('MACHINE', 'uefi-usb');
+    x11_start_program($program, %start_program_args);
+    if (match_has_tag('ooffice-tip-of-the-day')) {
+        # Unselect "_S_how tips on startup", select "_O_k"
+        send_key "alt-s";
+        send_key "alt-o";
+    }
 }
 
 1;

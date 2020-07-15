@@ -8,7 +8,12 @@
 # without any warranty.
 
 # Summary: LibreOffice: Open supported file types by double click (tc#1503778)
-# Maintainer: dehai <dhkong@suse.com>
+# - Download sample files from datadir
+# - Launch nautilus, open directory containing test files
+# - Open each file from the following formats: doc docx fodg fodp fods fodt odf
+#   odg odp ods odt pptx xlsx and check
+# - Quit libreoffice
+# Maintainer: Zhaocong Jia <zcjia@suse.com>
 
 use base "x11test";
 use strict;

@@ -10,7 +10,13 @@
 #testcase 5255-1503908:Evolution: setup timezone
 
 # Summary: tc#1503908: evolution_timezone_setup
-# Maintainer: Chingkai <qkzhu@suse.com>
+# - Open edit menu, preferences
+# - Open Calendar and Tasks
+# - Click on timezone selection
+# - On the map, select Shanghai timezone
+# - Select OK
+# - Close Evolution
+# Maintainer: Zhaocong Jia <zcjia@suse.com>
 
 use strict;
 use warnings;
@@ -19,10 +25,17 @@ use testapi;
 use utils;
 
 sub run {
-    my $self    = shift;
-    my $account = "internal_account_A";
-    $self->setup_pop($account);
+    my $self     = shift;
+    my $account  = "internal_account";
+    my $hostname = get_var('HOSTNAME');
+    if ($hostname eq 'client') {
+        $account = "internal_account_C";
+    }
+    else {
+        $account = "internal_account_A";
+    }
 
+    $self->setup_pop($account);
     # Set up timezone via: Edit->Preference->calendor and task->uncheck "use
     # sYstem timezone", then select
     send_key "alt-e";
@@ -37,16 +50,11 @@ sub run {
     assert_screen "mercator-zoomed-in";
     # Change timezone to Shanghai
     send_key "alt-s";
-    wait_still_screen 3;
-    send_key "ret";
-    if (check_screen "timezone-asia", 30) {
-        send_key "right";
-        send_key_until_needlematch("timezone-shanghai", "up");
-    }
-    else {
-        send_key_until_needlematch("timezone-asia-shanghai", "up")
-          || send_key_until_needlematch("timezone-asia-shanghai", "down");
-    }
+    wait_still_screen(2);
+    send_key_until_needlematch('timezone-asia', 'ret', 10, 2);
+    send_key "right";
+    wait_still_screen(2);
+    send_key_until_needlematch("timezone-shanghai", "up", 20, 1);
     send_key "ret";
     assert_screen "asia-shanghai-timezone-setup";
     send_key "alt-o";

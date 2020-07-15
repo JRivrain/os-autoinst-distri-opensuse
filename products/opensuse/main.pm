@@ -1,7 +1,7 @@
 # SUSE's openQA tests
 #
 # Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2018 SUSE LLC
+# Copyright © 2012-2020 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -30,38 +30,19 @@ init_main();
 
 sub cleanup_needles {
     remove_common_needles;
-    if (!get_var("LIVECD")) {
-        unregister_needle_tags("ENV-LIVECD-1");
+    for my $distri (qw(opensuse microos)) {
+        unregister_needle_tags("ENV-DISTRI-$distri") unless check_var('DISTRI', $distri);
     }
-    else {
-        unregister_needle_tags("ENV-LIVECD-0");
+    unregister_needle_tags('ENV-LIVECD-' . (get_var('LIVECD') ? 0 : 1));
+    for my $wm (qw(mate lxqt enlightenment awesome)) {
+        remove_desktop_needles($wm) unless check_var('DE_PATTERN', $wm);
     }
-    if (!check_var("DE_PATTERN", "mate")) {
-        remove_desktop_needles("mate");
+    unregister_needle_tags('ENV-LEAP-1')             unless is_leap;
+    unregister_needle_tags('ENV-VERSION-Tumbleweed') unless is_tumbleweed;
+    for my $flavor (qw(Krypton-Live Argon-Live GNOME-Live KDE-Live XFCE-Live Rescue-CD JeOS-for-AArch64 JeOS-for-kvm-and-xen)) {
+        unregister_needle_tags("ENV-FLAVOR-$flavor") unless check_var('FLAVOR', $flavor);
     }
-    if (!check_var("DE_PATTERN", "lxqt")) {
-        remove_desktop_needles("lxqt");
-    }
-    if (!check_var("DE_PATTERN", "enlightenment")) {
-        remove_desktop_needles("enlightenment");
-    }
-    if (!check_var("DE_PATTERN", "awesome")) {
-        remove_desktop_needles("awesome");
-    }
-    if (!is_jeos) {
-        unregister_needle_tags('ENV-FLAVOR-JeOS-for-kvm');
-    }
-    if (!is_leap) {
-        unregister_needle_tags('ENV-LEAP-1');
-    }
-    if (!is_tumbleweed) {
-        unregister_needle_tags('ENV-VERSION-Tumbleweed');
-    }
-    for my $flavor (qw(Krypton-Live Argon-Live)) {
-        if (!check_var('FLAVOR', $flavor)) {
-            unregister_needle_tags("ENV-FLAVOR-$flavor");
-        }
-    }
+    unregister_needle_tags('ENV-FLAVOR-JeOS-for-kvm') unless is_jeos;
     # unregister christmas needles unless it is December where they should
     # appear. Unused needles should be disregarded by admin delete then
     unregister_needle_tags('CHRISTMAS') unless get_var('WINTER_IS_THERE');
@@ -73,17 +54,11 @@ set_var('WINTER_IS_THERE', 1) if ($time[4] == 11 || $time[4] == 0);
 
 testapi::set_distribution(DistributionProvider->provide());
 
-# Set serial failures
+# Set failures
 $testapi::distri->set_expected_serial_failures(create_list_of_serial_failures());
+$testapi::distri->set_expected_autoinst_failures(create_list_of_autoinst_failures());
 
-unless (get_var("DESKTOP")) {
-    if (check_var("VIDEOMODE", "text")) {
-        set_var("DESKTOP", "textmode");
-    }
-    else {
-        set_var("DESKTOP", "kde");
-    }
-}
+set_var('DESKTOP', check_var('VIDEOMODE', 'text') ? 'textmode' : 'kde') unless get_var('DESKTOP');
 
 if (check_var('DESKTOP', 'minimalx')) {
     set_var("NOAUTOLOGIN", 1);
@@ -107,7 +82,7 @@ if (is_using_system_role && check_var('DESKTOP', 'xfce') && !get_var('PATTERNS')
 }
 
 # openSUSE specific variables
-set_var('LEAP', '1') if is_leap;
+set_var('LEAP',      '1') if is_leap;
 set_var("WALLPAPER", '/usr/share/wallpapers/openSUSEdefault/contents/images/1280x1024.jpg');
 
 # set KDE and GNOME, ...
@@ -119,10 +94,7 @@ if (check_var('DESKTOP', 'kde') && !get_var('KDE4')) {
     set_var("PLASMA5", 1);
 }
 
-# ZDUP_IN_X imply ZDUP
-if (get_var('ZDUP_IN_X')) {
-    set_var('ZDUP', 1);
-}
+set_var('ZDUP', 1) if get_var('ZDUP_IN_X');
 
 if (is_updates_test_repo && !get_var('ZYPPER_ADD_REPOS')) {
     my $repos = map_incidents_to_repo({OS => get_required_var('OS_TEST_ISSUES')}, {OS => get_required_var('OS_TEST_TEMPLATE')});
@@ -148,10 +120,12 @@ logcurrentenv(
       MOZILLATEST NOINSTALL UPGRADE USBBOOT ZDUP
       ZDUPREPOS TEXTMODE DISTRI NOAUTOLOGIN QEMUCPU QEMUCPUS RAIDLEVEL
       ENCRYPT INSTLANG QEMUVGA DOCRUN UEFI DVD GNOME KDE ISO ISO_MAXSIZE
-      LIVECD NETBOOT NOIMAGES QEMUVGA SPLITUSR VIDEOMODE)
+      LIVECD NETBOOT NOIMAGES SPLITUSR VIDEOMODE)
 );
 
 return 1 if load_yaml_schedule;
+
+return load_wicked_create_hdd if (get_var('WICKED_CREATE_HDD'));
 
 sub have_addn_repos {
     return !get_var("NET") && !get_var("EVERGREEN") && get_var("SUSEMIRROR") && !is_staging();
@@ -183,7 +157,6 @@ sub load_fixup_firewall {
 sub load_consoletests_minimal {
     return unless (is_staging() && get_var('UEFI') || is_gnome_next || is_krypton_argon);
     # Stagings should test yast2-bootloader in miniuefi at least but not all
-    loadtest "console/system_prepare";
     loadtest "console/prepare_test_data";
     loadtest "console/consoletest_setup";
     loadtest "console/textinfo";
@@ -205,6 +178,7 @@ sub load_otherDE_tests {
         loadtest "console/consoletest_finish";
         loadtest "x11/${de}_reconfigure_openqa";
         loadtest "x11/reboot_icewm";
+        loadtest "installation/opensuse_welcome" if opensuse_welcome_applicable($de);
         # here comes the actual desktop specific test
         if ($de =~ /^awesome$/)       { load_awesome_tests(); }
         if ($de =~ /^enlightenment$/) { load_enlightenment_tests(); }
@@ -341,22 +315,16 @@ elsif (is_rescuesystem) {
     loadtest "installation/rescuesystem";
     loadtest "installation/rescuesystem_validate_131";
 }
-elsif (get_var("LINUXRC")) {
-    loadtest "linuxrc/system_boot";
-}
 elsif (get_var("SUPPORT_SERVER")) {
     loadtest "support_server/boot";
     loadtest "support_server/login";
     loadtest "support_server/setup";
+    loadtest "support_server/meddle_multipaths" if (get_var("SUPPORT_SERVER_TEST_INSTDISK_MULTIPATH"));
+    loadtest "support_server/custom_pxeboot"    if (get_var("SUPPORT_SERVER_PXE_CUSTOMKERNEL"));
+    loadtest "support_server/flaky_mp_iscsi"    if (get_var("ISCSI_MULTIPATH_FLAKY"));
     unless (load_slenkins_tests()) {    # either run the slenkins control node or just wait for connections
         loadtest "support_server/wait_children";
     }
-}
-elsif (get_var("WINDOWS")) {
-    loadtest "installation/win10_installation";
-    loadtest "installation/win10_firstboot";
-    loadtest "installation/win10_reboot";
-    loadtest "installation/win10_shutdown";
 }
 elsif (ssh_key_import) {
     load_ssh_key_import_tests;
@@ -366,11 +334,19 @@ elsif (get_var("ISO_IN_EXTERNAL_DRIVE")) {
     load_inst_tests();
     load_reboot_tests();
 }
+elsif (get_var('CPU_BUGS')) {
+    load_mitigation_tests;
+}
 elsif (get_var('SECURITY_TEST')) {
     prepare_target();
     load_security_tests;
 }
 elsif (get_var('SYSTEMD_TESTSUITE')) {
+    if (!get_var('BOOT_HDD_IMAGE')) {
+        load_boot_tests();
+        load_inst_tests();
+        load_reboot_tests();
+    }
     load_systemd_patches_tests;
 }
 elsif (get_var('AUTOFS')) {
@@ -380,6 +356,7 @@ else {
     if (get_var("LIVETEST") || get_var('LIVE_INSTALLATION') || get_var('LIVE_UPGRADE')) {
         load_boot_tests();
         loadtest "installation/finish_desktop";
+        loadtest "installation/opensuse_welcome" if opensuse_welcome_applicable;
         if (get_var('LIVE_INSTALLATION') || get_var('LIVE_UPGRADE')) {
             loadtest "installation/live_installation";
             load_inst_tests();
@@ -393,7 +370,6 @@ else {
         load_reboot_tests();
     }
     elsif (installzdupstep_is_applicable()) {
-        load_boot_tests();
         load_zdup_tests();
     }
     elsif (get_var("BOOT_HDD_IMAGE")) {
@@ -406,6 +382,17 @@ else {
             set_var('INSTALLONLY', 1);
             loadtest "iscsi/iscsi_client";
         }
+        if (get_var('WIREGUARD_SERVER') || get_var("WIREGUARD_CLIENT")) {
+            set_var('INSTALLONLY', 1);
+            if (get_var('IS_MM_SERVER')) {
+                barrier_create 'SETUP_DONE',      2;
+                barrier_create 'KEY_TRANSFERED',  2;
+                barrier_create 'VPN_ESTABLISHED', 2;
+            }
+            loadtest "network/setup_multimachine";
+            loadtest "network/wireguard";
+            return 1;
+        }
         if (get_var("REMOTE_CONTROLLER")) {
             loadtest "remote/remote_controller";
             load_inst_tests();
@@ -415,16 +402,6 @@ else {
         load_boot_tests();
         loadtest "remote/remote_target";
         load_reboot_tests();
-    }
-    elsif (is_jeos) {
-        load_boot_tests();
-        loadtest "jeos/firstrun";
-        loadtest "console/force_scheduled_tasks";
-        loadtest "jeos/diskusage";
-        loadtest "jeos/root_fs_size";
-        if (get_var("SCC_EMAIL") && get_var("SCC_REGCODE")) {
-            loadtest "jeos/sccreg";
-        }
     }
     else {
         return 1 if load_default_tests;
@@ -437,6 +414,7 @@ else {
         || load_otherDE_tests()
         || load_slenkins_tests())
     {
+        loadtest "console/system_prepare";
         load_fixup_network();
         load_fixup_firewall();
         load_system_update_tests();

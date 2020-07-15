@@ -25,10 +25,14 @@ sub run {
     # needed for script_output
     zypper_call 'in curl';
 
+    my $firewall = $self->firewall;
+    systemctl "disable $firewall";
+    systemctl "stop $firewall";
+
     my $counter = 1;
     my @repos   = split(/,/, get_var('AVOCADO_REPO'));
     for my $var (@repos) {
-        zypper_call("--no-gpg-check ar -f $var 'AVOCADO_$counter'");
+        zypper_call("--no-gpg-checks ar -f $var 'AVOCADO_$counter'");
         $counter++;
     }
     zypper_call '--gpg-auto-import-keys ref';
@@ -72,9 +76,9 @@ if ! echo $EXT_STATUS|grep sle-module-public-cloud; then
 fi
 
 if [[ $VERSION_ID =~ '12' ]]; then
-    zypper -n in --replacefiles python-avocado-plugins-vt
+    zypper -n in --force-resolution --replacefiles python-avocado-plugins-vt
 else
-    zypper -n in --replacefiles python3-avocado-plugins-vt
+    zypper -n in --force-resolution --replacefiles python3-avocado-plugins-vt
 fi
 mkdir -p /var/lib/avocado/data/avocado-vt/images/
 curl -O ftp://10.100.12.155/jeos-27-x86_64.qcow2.xz
@@ -95,8 +99,8 @@ sed -i 's/ip, 10,/ip, 3,/' /var/lib/avocado/data/avocado-vt/test-providers.d/dow
 sed -i 's/boot_menu_key = "f12"/boot_menu_key = "esc"/' /var/lib/avocado/data/avocado-vt/backends/qemu/cfg/subtests.cfg
 egrep "^arch|^nettype|^netdst|^backup_image_before_test|^restore_image_after_test" /etc/avocado/conf.d/vt.conf
 egrep ^login_timeout /var/lib/avocado/data/avocado-vt/backends/qemu/cfg/base.cfg
-systemctl start openvswitch;
-systemctl status openvswitch;
+systemctl start openvswitch.service
+systemctl status openvswitch.service
 EOF
     script_output($avocado_setup, 700);
 }

@@ -9,9 +9,10 @@
 # without any warranty.
 
 # Summary: Full patch system using zypper
+# - Calls zypper in quiet mode and patch system
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
-use base "console_yasttest";
+use base "y2_module_consoletest";
 use strict;
 use warnings;
 use testapi;

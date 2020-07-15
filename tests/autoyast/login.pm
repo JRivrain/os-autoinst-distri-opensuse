@@ -14,11 +14,14 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 
 # Summary: Log into system installed with autoyast
+# - Check if system is at login screen in console
+# - Run "cat /proc/cmdline"
+# - Save screenshot
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
 use strict;
 use warnings;
-use base 'y2logsstep';
+use base 'y2_installbase';
 use testapi;
 use Utils::Backends 'use_ssh_serial_console';
 

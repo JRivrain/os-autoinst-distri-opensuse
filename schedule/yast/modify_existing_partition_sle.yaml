@@ -1,0 +1,40 @@
+---
+name: modify_existing_partition
+description: >
+  Installation where we modify some pre-existing partitions. Must depend on some
+  create_hdd test suite.
+schedule:
+  - installation/bootloader_start
+  - installation/welcome
+  - installation/accept_license
+  - installation/scc_registration
+  - installation/addon_products_sle
+  - installation/system_role
+  - installation/partitioning
+  - installation/partitioning/modify_existing_partition
+  - installation/installer_timezone
+  - installation/hostname_inst
+  - installation/user_settings
+  - installation/user_settings_root
+  - installation/resolve_dependency_issues
+  - installation/installation_overview
+  - installation/disable_grub_timeout
+  - installation/start_install
+  - installation/await_install
+  - installation/logs_from_installation_system
+  - installation/reboot_after_installation
+  - '{{reconnect_mgmt_console}}'
+  - '{{grub_test}}'
+  - installation/first_boot
+  - console/validate_modify_existing_partition
+test_data:
+  <<: !include test_data/yast/modify_existing_partition/modify_existing_partition.yaml
+conditional_schedule:
+  reconnect_mgmt_console:
+    ARCH:
+      s390x:
+        - boot/reconnect_mgmt_console
+  grub_test:
+    BACKEND:
+      qemu:
+        - installation/grub_test

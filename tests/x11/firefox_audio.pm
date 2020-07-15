@@ -12,6 +12,10 @@
 #  Depending on if firefox has been started in before firefox might behave
 #  different but should always show the play controls which the test is
 #  looking for.
+# - Start audio capture subsystem
+# - Start firefox opening file "1d5d9dD.oga" from datadir
+# - Check recorded sound
+# - Exit firefox
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
 use base "x11test";
@@ -22,7 +26,15 @@ use testapi;
 sub run {
     my ($self) = @_;
     start_audiocapture;
-    x11_start_program('firefox ' . data_url('1d5d9dD.oga'), target_match => 'test-firefox_audio-1', match_timeout => 90);
+    x11_start_program('firefox ' . data_url('1d5d9dD.oga'), target_match => [qw(command-not-found test-firefox_audio-1)], match_timeout => 90);
+    #  re-try for typing issue, see https://progress.opensuse.org/issues/54401
+    if (match_has_tag 'command-not-found') {
+        for my $retry (0 .. 2) {
+            send_key 'esc';
+            x11_start_program('firefox ' . data_url('1d5d9dD.oga'), target_match => 'test-firefox_audio-1', match_timeout => 90);
+            last if (match_has_tag 'test-firefox_audio-1');
+        }
+    }
     sleep 1;    # at least a second of silence
 
     # firefox_audio is unstable due to bsc#1048271, we don't want to invest

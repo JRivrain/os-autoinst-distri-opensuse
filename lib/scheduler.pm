@@ -22,11 +22,20 @@ use strict;
 use warnings;
 
 use File::Basename;
-use testapi qw(get_var set_var);
+use testapi qw(get_var set_var diag);
 use main_common 'loadtest';
-use YAML::Tiny;
+use YAML::PP;
+use YAML::PP::Schema::Include;
+use Data::Dumper;
 
-our @EXPORT = qw(load_yaml_schedule);
+our @EXPORT = qw(load_yaml_schedule get_test_suite_data);
+
+my $test_suite_data;
+my $root_project_dir = dirname(__FILE__) . '/../';
+
+my $include = YAML::PP::Schema::Include->new(paths => ($root_project_dir));
+my $ypp     = YAML::PP->new(schema => ['Core', $include, 'Merge']);
+$include->yp($ypp);
 
 sub parse_vars {
     my ($schedule) = shift;
@@ -56,6 +65,41 @@ sub parse_schedule {
     return @scheduled;
 }
 
+=head2 get_test_suite_data
+
+Returns test data parsed from the yaml file.
+
+=cut
+
+sub get_test_suite_data {
+    return $test_suite_data;
+}
+
+=head2 parse_test_suite_data
+
+Parse test data from the yaml file which contains data used in the tests which could be located
+in the same file than the schedule or in a dedicated file only for data.
+
+=cut
+
+sub parse_test_suite_data {
+    my ($schedule) = shift;
+    $test_suite_data = {};
+    if (exists $schedule->{test_data}) {
+        $test_suite_data = {%$test_suite_data, %{$schedule->{test_data}}};
+    }
+    # import test data directly from data file
+    if (my $yamlfile = get_var('YAML_TEST_DATA')) {
+        my $include_yaml = $ypp->load_file($root_project_dir . $yamlfile);
+        # latest included data has priority over previous included data
+        $test_suite_data = {%$test_suite_data, %{$include_yaml}};
+    }
+    local $Data::Dumper::Terse = 1;
+    my $out = Dumper($test_suite_data);
+    chomp($out);
+    diag("parse_test_suite_data: $out");
+}
+
 =head2 load_yaml_schedule
 
 Parse variables and test modules from a yaml file representing a test suite to be scheduled.
@@ -64,10 +108,11 @@ Parse variables and test modules from a yaml file representing a test suite to b
 
 sub load_yaml_schedule {
     if (my $yamlfile = get_var('YAML_SCHEDULE')) {
-        my $schedule      = YAML::Tiny::LoadFile(dirname(__FILE__) . '/../' . $yamlfile);
+        my $schedule      = $ypp->load_file($root_project_dir . $yamlfile);
         my %schedule_vars = parse_vars($schedule);
         while (my ($var, $value) = each %schedule_vars) { set_var($var, $value) }
         my @schedule_modules = parse_schedule($schedule);
+        parse_test_suite_data($schedule);
         loadtest($_) for (@schedule_modules);
         return 1;
     }

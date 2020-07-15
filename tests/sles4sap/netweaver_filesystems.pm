@@ -30,12 +30,12 @@ sub run {
     # LUN information is needed after for the HA configuration
     set_var('INSTANCE_LUN', "$lun");
 
-    select_console 'root-console';
+    $self->select_serial_terminal;
 
     # Create/format/mount local filesystems
-    assert_script_run "mkfs -t xfs -f $lun";
+    assert_script_run "mkfs -t xfs -f \"$lun\"";
     assert_script_run "mkdir -p $sap_dir/${type}${instance_id}";
-    assert_script_run "mount $lun $sap_dir/${type}${instance_id}";
+    assert_script_run "mount \"$lun\" $sap_dir/${type}${instance_id}";
 
     # Mount NFS filesystem
     assert_script_run "echo '$path/$arch/nfs_share/sapmnt /sapmnt $proto defaults,bg 0 0' >> /etc/fstab";

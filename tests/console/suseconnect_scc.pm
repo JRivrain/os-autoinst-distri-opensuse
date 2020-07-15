@@ -1,6 +1,6 @@
 # SUSE openQA tests
 #
-# Copyright (C) 2017 SUSE LLC
+# Copyright (C) 2017-2020 SUSE LLC
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -30,18 +30,21 @@ sub run {
     return if get_var('HDD_SCC_REGISTERED');
     my $self       = shift;
     my $reg_code   = get_required_var('SCC_REGCODE');
-    my $scc_url    = get_required_var('SCC_URL');
+    my $cmd        = "SUSEConnect -r $reg_code";
     my $scc_addons = get_var('SCC_ADDONS', '');
 
-    get_var('JEOSINSTLANG', '') =~ 'DE' ? select_console('root-console') : $self->select_serial_terminal;
-    assert_script_run "SUSEConnect --url $scc_url -r $reg_code";
+    if ($reg_code !~ /^INTERNAL-USE-ONLY.*/i) {
+        $cmd .= ' --url ' . (get_required_var 'SCC_URL');
+    }
+
+    select_console('root-console');
+    assert_script_run $cmd;
     assert_script_run 'SUSEConnect --list-extensions';
+    assert_screen 'activated-with-suseconnect';
 
     # add modules
     if (is_sle '15+') {
-        foreach (split(',', $registration::SLE15_DEFAULT_MODULES{get_required_var('SLE_PRODUCT')} . ",$scc_addons")) {
-            add_suseconnect_product("sle-module-" . lc($registration::SLE15_MODULES{$_}));
-        }
+        register_addons_cmd;
     }
     # Check that repos actually work
     zypper_call('refresh');

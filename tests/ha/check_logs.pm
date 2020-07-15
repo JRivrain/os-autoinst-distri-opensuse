@@ -16,12 +16,13 @@ use warnings;
 use testapi;
 use lockapi;
 use hacluster qw(get_cluster_name ha_export_logs);
+use version_utils 'is_sle';
 
 sub run {
     my $cluster_name = get_cluster_name;
 
     # Checking cluster state can take time, so default timeout is not enough
-    assert_script_run 'crm script run health', 240;
+    assert_script_run 'crm script run health', bmwqemu::scale_timeout(240);
 
     barrier_wait("LOGS_CHECKED_$cluster_name");
 

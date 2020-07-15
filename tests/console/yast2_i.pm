@@ -1,7 +1,7 @@
 # SUSE's openQA tests
 #
 # Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2019 SUSE LLC
+# Copyright © 2012-2020 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -9,9 +9,20 @@
 # without any warranty.
 
 # Summary: Install packages using yast2.
-# Maintainer: Martin Kravec <mkravec@suse.com>
+# - Remove package from "$PACKAGETOINSTALL_RECOMMENDED" or yast2-nfs-client and nfs-client
+# - Install yast2-packager
+# - Launch yast2 sw_single
+# - On Yast2, enable "recommended packages"
+# - Search for "$PACKAGETOINSTALL_RECOMMENDED" or "yast2-nfs-client" (test
+# package_
+# - Select package to install
+# - On sles newer than sle12sp0, search for "$PACKAGETOINSTALL_RECOMMENDED" or
+# "nfs-client"
+# - Disable "recommended packages" and accept install of test package
+# - Remove test package
+# Maintainer: QA SLE YaST team <qa-sle-yast@suse.de>
 
-use base "console_yasttest";
+use base "y2_module_consoletest";
 use strict;
 use warnings;
 use testapi;
@@ -52,15 +63,15 @@ sub run {
 
     # check required automatic updates, it is not scanned on sle12 codestream
     if (is_sle('>=15-sp1') || is_tumbleweed || is_leap('>=15.1')) {
-        $output = script_output('zypper -n inr -D --no-recommends');
+        $output = script_output('zypper -n inr -D --no-recommends', 200);
         my $zypper_regex = qr/The\s{1}following.*going\s{1}to\s{1}be\s{1}\w+:\s+([a-zA-Z0-9-_].*)/;
         if ($output =~ $zypper_regex) {
             $is_inr_package = !!$1;
             record_info("Required", "$1");
         }
     }
-    my $module_name = y2logsstep::yast2_console_exec(yast2_module => 'sw_single');
-    assert_screen [qw(empty-yast2-sw_single yast2-preselected-driver)], 90;
+    my $module_name = y2_module_consoletest::yast2_console_exec(yast2_module => 'sw_single');
+    assert_screen [qw(empty-yast2-sw_single yast2-preselected-driver)], 120;
 
     # we need to change filter to Search, in case yast2 reports available automatic update
     if ($is_inr_package) {
@@ -85,13 +96,17 @@ sub run {
     # Testcase according to https://progress.opensuse.org/issues/44864
     if (!check_var('VERSION', '12')) {
         send_key 'alt-d';
+        wait_still_screen(2);
         assert_screen [qw(yast2-sw_install_recommended_packages_enabled yast2-sw_install_recommended_packages_disabled)];
         if (match_has_tag('yast2-sw_install_recommended_packages_disabled')) {
-            wait_screen_change { send_key 'alt-r' };
+            send_key 'alt-r';
+            wait_still_screen(2);
         } else {
-            wait_screen_change { send_key 'esc' };
+            send_key 'esc';
+            wait_still_screen(2);
         }
-        wait_screen_change { send_key 'alt-p' };
+        send_key 'alt-p';
+        wait_still_screen(2);
     }
 
     # Testcase according to https://fate.suse.com/318099
@@ -135,7 +150,7 @@ sub run {
     #   restart - go back to the package manager, install/remove more packages
     #   summary - display an installation summary dialog, there user can decide whether to finish or restart
     if ($y2_exit_action =~ m/summary/) {
-        assert_screen 'yast2-sw_shows_summary';
+        assert_screen 'yast2-sw_shows_summary', 90;
         wait_screen_change { send_key 'alt-f' };
     } elsif ($y2_exit_action =~ m/restart/) {
         assert_screen 'empty-yast2-sw_single';

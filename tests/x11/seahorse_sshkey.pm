@@ -8,17 +8,22 @@
 # without any warranty.
 #
 # Summary: Test add new secure shell key with gnome-keyring
-# Maintainer: Jiawei Sun <jiawei.sun@suse.com>
+# Maintainer: Zhaocong Jia <zcjia@suse.com> Grace Wang <grace.wang@suse.com>
 
 use base "x11test";
 use strict;
 use warnings;
 use testapi;
+use utils 'zypper_call';
 
 sub run {
+    select_console 'root-console';
+    zypper_call "in seahorse";
+    select_console 'x11';
+
     x11_start_program('seahorse');
-    send_key "ctrl-n";                            # New Keyring
-    assert_screen 'seahorse-keyring-selector';    # Dialog "Select type to create"
+    send_key "ctrl-n";                                                  # New Keyring
+    assert_screen 'seahorse-keyring-selector';                          # Dialog "Select type to create"
     send_key_until_needlematch("seahorse-secure-shell-key", "down");    # Selected secure shell key
     send_key 'ret';
     assert_screen 'seahorse-new-sshkey';                                # Dialog : "Add password; New ssh key"

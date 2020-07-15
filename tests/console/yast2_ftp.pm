@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright (c) 2016-2018 SUSE LLC
+# Copyright (c) 2016-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -8,22 +8,29 @@
 # without any warranty.
 
 # Summary: Check yast ftp-server options and ability to start vsftpd with ssl support
-# Maintainer: Zaoliang Luo <zluo@suse.de>
+# FTP Server Wizard
+# Step 1: Installs the package and dependencies;
+# Step 2: Create certificate;
+# Step 3: Run yast2 ftp configuration, set it to start on boot - confirm with a needle;
+# Step 4: Full file integrity check of /etc/vsftpd.conf;
+# Step 5: All yast2 ftp sub-menu-screens are opened and checked with a needle;
+# Step 6: A FTP server is created;
+# Step 7: Send finish command exits the app.
+# Maintainer: Sergio R Lemke <slemke@suse.com>
 
 use strict;
 use warnings;
-use base "console_yasttest";
+use base "y2_module_consoletest";
 use testapi;
 use utils;
 use version_utils;
-use y2logsstep;
-use yast2_widget_utils 'change_service_configuration';
+use y2_installbase;
 
 sub vsftd_setup_checker {
-    my $config_ref              = pop();
-    my $error                   = "";
-    my @vsftpd_conf_tested_dirs = qw(pasv_min_port pasv_max_port anon_mkdir_write_enable anon_root anon_umask anon_upload_enable anon_max_rate chroot_local_user
-      ftpd_banner local_root local_umask local_max_rate max_clients max_per_ip pasv_enable rsa_cert_file ssl_tlsv1);
+    my ($self, $config_ref) = @_;
+    my $error = "";
+    my @vsftpd_conf_tested_dirs = qw(pasv_min_port pasv_max_port anon_mkdir_write_enable anon_root anon_umask anon_upload_enable anon_max_rate chroot_local_user ftpd_banner local_root local_umask local_max_rate max_clients max_per_ip pasv_enable ssl_tlsv1);
+    push @vsftpd_conf_tested_dirs, $self->{cert_directive};
 
     foreach (@vsftpd_conf_tested_dirs) {
         if (script_run("grep \"^$_=$config_ref->{$_}\" \/etc\/vsftpd\.conf")) {
@@ -44,7 +51,8 @@ sub vsftpd_firewall_checker {
 }
 
 sub run {
-    my $self              = shift;
+    my $self = shift;
+    $self->{cert_directive} = (is_sle('>12-SP2') || is_opensuse) ? 'rsa_cert_file' : 'dsa_cert_file';
     my $vsftpd_directives = {
         pasv_min_port           => '30000',
         pasv_max_port           => '30100',
@@ -63,49 +71,67 @@ sub run {
         max_clients             => '20',
         max_per_ip              => '7',
         pasv_enable             => 'YES',
-        rsa_cert_file           => '/etc/vsftpd.pem',
         ssl_tlsv1               => 'YES'
     };
-
+    $vsftpd_directives->{$self->{cert_directive}} = '/etc/vsftpd.pem';
     select_console 'root-console';
 
     # install vsftps
     zypper_call("in vsftpd yast2-ftp-server", timeout => 180);
 
+    if (is_sle('>=15')) {
+        zypper_call("in yast2-users", timeout => 180);
+        record_soft_failure 'bsc#1132116';
+    }
+
+    # clear any existing vsftpd leftover configs:
+    script_run("rm /etc/vsftpd.conf");
+    assert_script_run("rm -f /etc/vsftpd.pem");    #-f to not trigger error if file does not exist
+
     # bsc#694167
     # create RSA certificate for ftp server at first which can be used for SSL configuration
-    # type_string("openssl req -x509 -nodes -days 365 -newkey rsa:1024 -keyout /etc/vsftpd.pem -out /etc/vsftpd.pem\n");
-
-    # create DSA certificate for ftp server at first which can be used for SSL configuration
-    script_run("openssl dsaparam -out dsaparam.pem 1024");
-    type_string_slow("openssl req -x509 -nodes -days 365 -newkey dsa:dsaparam.pem \\\n"
-          . "-subj '/C=DE/ST=Bayern/L=Nuremberg/O=Suse/OU=QA/CN=localhost/emailAddress=admin\@localhost' \\\n"
-          . "-keyout $vsftpd_directives->{rsa_cert_file} -out $vsftpd_directives->{rsa_cert_file}\n");
+    if (is_sle('<=12-SP2')) {
+        script_run("openssl req -x509 -nodes -days 365 -newkey rsa:1024 \\\n"
+              . "-subj '/C=DE/ST=Bayern/L=Nuremberg/O=Suse/OU=QA/CN=localhost/emailAddress=admin\@localhost' \\\n"
+              . "-keyout $vsftpd_directives->{dsa_cert_file} -out $vsftpd_directives->{dsa_cert_file}\n");
+    } else {
+        # create DSA certificate for ftp server at first which can be used for SSL configuration
+        script_run("openssl dsaparam -out dsaparam.pem 1024");
+        type_string_slow("openssl req -x509 -nodes -days 365 -newkey dsa:dsaparam.pem \\\n"
+              . "-subj '/C=DE/ST=Bayern/L=Nuremberg/O=Suse/OU=QA/CN=localhost/emailAddress=admin\@localhost' \\\n"
+              . "-keyout $vsftpd_directives->{rsa_cert_file} -out $vsftpd_directives->{rsa_cert_file}\n");
+    }
 
     # check vsftpd.pem is created
-    die "certificate does not exist" if assert_script_run("[[ -e $vsftpd_directives->{rsa_cert_file} ]]");
+    assert_script_run("ls /etc/vsftpd.pem");
 
     # start yast2 ftp configuration
-    my $module_name = y2logsstep::yast2_console_exec(yast2_module => 'ftp-server');
+    my $module_name = y2_module_consoletest::yast2_console_exec(yast2_module => 'ftp-server');
+
     assert_screen 'ftp-server';    # check ftp server configuration page
-    if (is_sle('<15') || is_leap('<15.1')) {
-        send_key 'alt-w';                           # make sure ftp start-up when booting
-        assert_screen 'ftp_server_when_booting';    # check service start when booting
+
+    if (is_sle('>15') || is_leap('>15.0') || is_tumbleweed) {
+        send_key 'alt-t';          #opens service popup (start service after this config)
+        send_key 'up';             #selects 'Start'
+        send_key 'ret';            #confirm
+
+        send_key 'alt-a';          #opens service popup (enable service after reboot)
+        send_key 'up';             #selects 'Start on boot'
+        send_key 'ret';            #confirm
+    } else {
+        send_key 'alt-w';                     # make sure ftp start-up when booting
+        send_key 'alt-d' if is_sle('=15');    # only sle 15 has this specific combination
     }
-    else {
-        change_service_configuration(
-            after_writing => {start         => 'alt-t'},
-            after_reboot  => {start_on_boot => 'alt-a'}
-        );
-    }
+
+    assert_screen 'ftp_server_when_booting';    # check service start when booting
 
     # General
     send_key_until_needlematch 'yast2_ftp_start-up_selected', 'tab';
     wait_screen_change { send_key 'down' };
-    wait_screen_change { send_key 'ret' };          # enter page General
+    wait_screen_change { send_key 'ret' };      # enter page General
     assert_screen 'yast2_tftp_general_selected';
-    assert_screen 'ftp_welcome_mesage';             # check welcome message for add strings
-    send_key 'alt-w';                               # select welcome message to edit
+    assert_screen 'ftp_welcome_mesage';         # check welcome message for add strings
+    send_key 'alt-w';                           # select welcome message to edit
     send_key_until_needlematch 'yast2_tftp_empty_welcome_message', 'backspace';    # delete existing welcome strings
     type_string($vsftpd_directives->{ftpd_banner});                                # type new welcome text
     assert_screen 'ftp_welcome_message_added';                                     # check new welcome text
@@ -145,6 +171,7 @@ sub run {
     send_key_until_needlematch 'yast2_tftp_performance_selected', 'shift-tab';
     wait_screen_change { send_key 'down' };
     wait_screen_change { send_key 'ret' };
+    send_key 'alt-b';                                                              # enable anon upload by authenticated an anon users
     send_key 'alt-e';
     assert_screen 'yast2_ftp_authentication_enabled';
     wait_screen_change { send_key 'alt-y' };
@@ -175,7 +202,13 @@ sub run {
     wait_screen_change { send_key 'alt-l' };                # enable SSL, and wait with next step
     wait_still_screen;
     wait_screen_change { send_key 'alt-s' };                # give path for DSA certificate
-    type_string_slow($vsftpd_directives->{rsa_cert_file});
+
+    if (is_sle('>=12-SP3') || is_opensuse) {
+        type_string_slow($vsftpd_directives->{rsa_cert_file});
+    } else {
+        type_string_slow($vsftpd_directives->{dsa_cert_file});
+    }
+
     assert_screen 'yast2_ftp_port_closed';
     send_key 'alt-p';                                       # open port in firewall
     assert_screen 'yast2_ftp_port_opened';
@@ -185,7 +218,7 @@ sub run {
     die "'yast2 ftp-server' didn't exit with zero exit code in defined timeout" unless wait_serial("$module_name-0", 180);
 
     # check /etc/vsftpd.conf whether it has been updated accordingly
-    vsftd_setup_checker($vsftpd_directives);
+    $self->vsftd_setup_checker($vsftpd_directives);
 
     # check presence of vsftpd service in firewalld
     if ($self->firewall eq 'firewalld') {
@@ -194,7 +227,12 @@ sub run {
 
     # let's try to run it
     systemctl 'start vsftpd';
-    systemctl 'is-active vsftpd', fail_message => 'bsc#975538';
+
+    if (is_sle('<=12-SP2')) {
+        record_soft_failure 'bsc#975538 - yast sets dsa instead rsa in /etc/vsftpd.conf';
+    } else {
+        systemctl 'is-active vsftpd', fail_message => 'bsc#975538';
+    }
 }
 
 sub post_fail_hook {
@@ -202,7 +240,7 @@ sub post_fail_hook {
 
     upload_logs('/etc/vsftpd.conf');
     upload_logs('/tmp/failed_vsftpd_directives.log');
-    $self->save_upload_y2logs;
+    y2_installbase::save_upload_y2logs;
 }
 
 1;

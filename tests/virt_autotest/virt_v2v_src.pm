@@ -21,7 +21,7 @@ use mmapi;
 sub run {
     my ($self) = @_;
 
-    my $ip_out = $self->execute_script_run('ip route show|grep kernel|cut -d" " -f12|head -1', 30);
+    my $ip_out = $self->execute_script_run('ip route show|grep kernel|cut -d" " -f9|head -1', 30);
     set_var('SRC_IP',   $ip_out);
     set_var('SRC_USER', "root");
     set_var('SRC_PASS', $password);
@@ -34,7 +34,7 @@ sub run {
     wait_for_children;
 
     script_run("xl dmesg > /tmp/xl-dmesg.log");
-    &virt_autotest_base::upload_virt_logs("/var/log/libvirt /var/log/messages /var/log/xen /var/lib/xen/dump /tmp/xl-dmesg.log", "virt-v2v-xen-src-logs");
+    virt_autotest_base::upload_virt_logs("/var/log/libvirt /var/log/messages /var/log/xen /var/lib/xen/dump /tmp/xl-dmesg.log", "virt-v2v-xen-src-logs");
 }
 
 1;

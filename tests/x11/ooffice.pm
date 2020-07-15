@@ -9,20 +9,26 @@
 # without any warranty.
 
 # Summary: Startup, basic input, shutdown of oowriter
+# - Launch oowriter
+# - Type 'Hello World!'
+# - Close oowriter
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
 use base "x11test";
 use strict;
 use warnings;
 use testapi;
-use utils 'type_string_slow';
+use utils 'type_string_very_slow';
 
 sub run {
-    x11_start_program('oowriter');
+    my ($self) = shift;
+
+    $self->libreoffice_start_program('oowriter');
     # clicking the writing area to make sure the cursor addressed there
-    wait_screen_change { assert_and_click 'ooffice-writing-area', 'left', 10 };
+    assert_and_click('ooffice-writing-area', timeout => 10);
+    wait_still_screen(5, 10);
     # auto-correction does not handle super-fast typing well
-    type_string_slow 'Hello World!';
+    type_string_very_slow 'Hello World!';
     assert_screen 'test-ooffice-2';
     send_key "alt-f4";
     assert_screen "ooffice-save-prompt";

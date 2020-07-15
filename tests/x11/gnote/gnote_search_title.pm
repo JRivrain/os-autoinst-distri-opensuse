@@ -9,7 +9,10 @@
 # without any warranty.
 
 # Summary: Gnote: Search for text in title of notes
-# Maintainer: Chingkai <qkzhu@suse.com>
+# - Launch gnote and check
+# - Select all notes
+# - Send CTRL-F, type "here", check and close gnote
+# Maintainer: Zhaocong Jia <zcjia@suse.com> Grace Wang <grace.wang@suse.com>
 # Tags: tc#1503894
 
 use base "x11test";

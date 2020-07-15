@@ -12,11 +12,11 @@
 
 use strict;
 use warnings;
-use base "console_yasttest";
+use base "y2_module_consoletest";
+
 use testapi;
 use utils;
 use version_utils qw(is_sle is_leap is_tumbleweed is_opensuse);
-use y2logsstep;
 use yast2_widget_utils 'change_service_configuration';
 
 my %ldap_directives = (
@@ -24,7 +24,7 @@ my %ldap_directives = (
     dir_instance        => 'openqatest',
     dir_suffix          => 'dc=ldaptest,dc=org',
     dn_container        => 'dc=ldaptest,dc=org',
-    dir_manager_dn      => 'cn=root',
+    dir_manager_dn      => 'cn=Directory Manager',
     dir_manager_passwd  => 'openqatest',
     ca_cert_pem         => '/root/samba_ca_cert.pem',
     srv_cert_key_pkcs12 => '/root/samba_server_cert.p12'
@@ -66,13 +66,12 @@ sub smb_conf_checker {
 sub setup_yast2_ldap_server {
     my %ldap_options_to_dirs = (
         f => 'fqdn',
-        i => 'dir_instance',
-        t => 'dir_suffix',
-        d => 'dir_manager_dn',
+        d => 'dir_instance',
+        i => 'dir_suffix',
+        n => 'dir_manager_passwd',
         r => 'dir_manager_passwd',
-        e => 'dir_manager_passwd',
         s => 'ca_cert_pem',
-        v => 'srv_cert_key_pkcs12'
+        e => 'srv_cert_key_pkcs12'
     );
     assert_script_run 'wget ' . data_url('console/samba_ca_cert.pem');
     assert_script_run 'wget ' . data_url('console/samba_server_cert.p12');
@@ -82,7 +81,7 @@ sub setup_yast2_ldap_server {
     assert_script_run("echo \"$ldap_directives{fqdn}\" > /etc/hostname");
 
     record_info 'Setup LDAP', 'Create New Directory Instance';
-    my $module_name = y2logsstep::yast2_console_exec(yast2_module => 'ldap-server');
+    my $module_name = y2_module_consoletest::yast2_console_exec(yast2_module => 'ldap-server');
 
     wait_still_screen(2);
     foreach (sort keys %ldap_options_to_dirs) {
@@ -103,15 +102,12 @@ sub setup_yast2_ldap_server {
 }
 
 sub setup_yast2_auth_server {
-    # workaround kernel message floating over console
-    assert_script_run "dmesg -n 4";
-    record_soft_failure 'bsc#1011815';
 
     # check network at first
     assert_script_run("if ! systemctl -q is-active network; then systemctl -q start network; fi");
 
     # SLE12SP4 still uses old yast2-auth-server-3.1.18, which does not contain ldap-server.rb
-    my $module_name = y2logsstep::yast2_console_exec(yast2_module => 'auth-server');
+    my $module_name = y2_module_consoletest::yast2_console_exec(yast2_module => 'auth-server');
 
     #confirm offered rpms to install
     assert_screen('yast2_install_packages');
@@ -130,7 +126,8 @@ sub setup_yast2_auth_server {
 
     assert_screen 'yast2_ldap_configuration_stand-alone_tls';
     # move to next page basic database settings and set base dn, ldap admin password
-    wait_screen_change { send_key 'alt-n' };
+    send_key 'alt-n';
+    assert_screen 'yast2_ldap_basic_db_configuration';
     wait_screen_change { send_key 'alt-s' };
     type_string($ldap_directives{dn_container});
     wait_screen_change { send_key 'alt-a' };
@@ -186,11 +183,15 @@ sub setup_samba_startup {
         assert_screen 'yast2_samba-server_start-during-boot';
     }
     else {
-        change_service_configuration(
-            after_writing => {start         => 'alt-e'},
-            after_reboot  => {start_on_boot => 'alt-a'}
-        );
+        send_key 'alt-e';
+        send_key 'end';
+        send_key_until_needlematch 'yast2_ncurses_service_start_after_writing_conf', 'up', 5, 1;
+        send_key 'ret';
+        send_key 'alt-a';
+        send_key_until_needlematch 'yast2_ncurses_service_start_on_boot_after_reboot', 'up', 5, 1;
+        send_key 'ret';
     }
+
     send_key $actions{firewall}->{shortcut};
     assert_screen 'yast2_samba_open_port_firewall';
 }
@@ -368,7 +369,7 @@ sub setup_samba_ldap_expert {
 }
 
 sub setup_samba {
-    my $module_name = y2logsstep::yast2_console_exec(yast2_module => 'samba-server');
+    my $module_name = y2_module_consoletest::yast2_console_exec(yast2_module => 'samba-server');
     set_workgroup;
     handle_domain_controller if (is_sle('<15') || is_leap('<15.0'));
     setup_samba_startup;
@@ -391,8 +392,6 @@ sub run {
         setup_yast2_auth_server;
     }
     else {
-        # dirsrv@openqa cannot be restarted due to dependency issues
-        record_soft_failure "bsc#1088152";
         setup_yast2_ldap_server;
     }
     setup_samba;

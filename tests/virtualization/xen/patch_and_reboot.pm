@@ -15,6 +15,7 @@ use warnings;
 use strict;
 use power_action_utils 'power_action';
 use ipmi_backend_utils;
+use virt_autotest::kernel;
 use testapi;
 use utils;
 use qam;
@@ -23,6 +24,11 @@ sub run {
     my $self = shift;
 
     set_var('MAINT_TEST_REPO', get_var('INCIDENT_REPO'));
+
+    check_virt_kernel();
+    script_run "zypper lr -d";
+    script_run "rpm -qa > /tmp/rpm-qa.txt";
+    upload_logs("/tmp/rpm-qa.txt");
 
     add_test_repositories;
     fully_patch_system;
@@ -36,21 +42,9 @@ sub run {
         script_retry "virsh list --all | grep -v Domain-0 | grep running", delay => 3, retry => 30, expect => 1;
     }
 
-    #leave ssh console and switch to sol console
-    switch_from_ssh_to_sol_console(reset_console_flag => 'off');
-    #login
-    send_key_until_needlematch('text-login', 'ret', 360, 5);
-    type_string "root\n";
-    assert_screen "password-prompt";
-    type_password;
-    send_key('ret');
-    assert_screen "text-logged-in-root";
-
-    #type reboot
-    type_string("reboot\n");
+    script_run '( sleep 15 && reboot & )';
     save_screenshot;
-    #switch to sut console
-    reset_consoles;
+    switch_from_ssh_to_sol_console(reset_console_flag => 'on');
 }
 
 sub post_run_hook {

@@ -1,7 +1,7 @@
 # SUSE's openQA tests
 #
 # Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2019 SUSE LLC
+# Copyright © 2012-2020 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -9,13 +9,45 @@
 # without any warranty.
 
 # Summary: Monitor installation progress and wait for "reboot now" dialog
+# - Inside a loop, run check_screen for each element of array @tags
+# - Check return code of check_screen against array @tags
+#   - If no return code, decreate timeout by 30s, print diagnose text: "left total await_install timeout: $timeout"
+#   - If timeout less than 0, assert_screen on element of @tags and abort: "timeout hit on during await_install"
+#   'installation not finished, move mouse around a bit to keep screen unlocked'
+#   and move mouse to prevent screenlock
+#   - If needle matches "yast_error", abort with 'YaST error detected. Test is terminated.'
+#   - If needle matches 'yast2_wrong_digest', abort with 'Wrong Digest detected error, need to end test.'
+#   - If needle matches 'yast2_package_retry', record_soft_failure 'boo#1018262
+#   retry failing packages', send 'alt-y', retry in 4s, otherwise, abort with 'boo#1018262 - seems to be stuck on retry'
+#   - If needle matches 'DIALOG-packages-notifications', send alt-o
+#   - if needle matches 'ERROR-removing-package':
+#     - Send 'alt-d', check for needle 'ERROR-removing-package-details'
+#     - Send 'alt-i', check for needle 'WARNING-ignoring-package-failure'
+#     - Send 'alt-o'
+#   - If LIVECD is defined and needle "screenlock" matches:
+#     - Call "handle_livecd_screenlock"
+#       - Call record_soft_failure 'boo#994044: Kde-Live net installer is interrupted by screenlock'
+#       - Print diag message 'unlocking screenlock with no password in LIVECD mode'
+#       - While "screenlock" needle matches:
+#         - Send 'alt-tab'
+#         - While no "blackscreen" matches:
+#           - Send 'tab'
+#           - Send 'ret'
+#       - Save a screenshot
+#       - Check for a needle: "yast-still-running"
+#   - If needle matches 'additional-packages'
+#     - Send 'alt-i'
+#   - If needle matches 'package-update-found'
+#     - Send 'alt-n'
+#   - Stop reboot timeout where necessary
 # Maintainer: Oliver Kurz <okurz@suse.de>
 
 use strict;
 use warnings;
-use base 'y2logsstep';
+use base 'y2_installbase';
 use testapi;
 use lockapi;
+use mmapi;
 use utils;
 use version_utils qw(:VERSION :BACKEND);
 use ipmi_backend_utils;
@@ -23,7 +55,8 @@ use ipmi_backend_utils;
 sub handle_livecd_screenlock {
     record_soft_failure 'boo#994044: Kde-Live net installer is interrupted by screenlock';
     diag('unlocking screenlock with no password in LIVECD mode');
-    do {
+    my $retries = 7;
+    for (1 .. $retries) {
         # password and unlock button seem to be not in focus so switch to
         # the only 'window' shown, tab over the empty password field and
         # confirm unlocking
@@ -32,7 +65,9 @@ sub handle_livecd_screenlock {
             send_key 'tab';
             send_key 'ret';
         }
-    } while (check_screen('screenlock', 20));
+        last unless check_screen([qw(screenlock blackscreen)], 20);
+        die "Failed to unlock screen within multiple retries" if $_ == $retries;
+    }
     save_screenshot;
     # can take a long time until the screen unlock happens as the
     # system is busy installing.
@@ -54,9 +89,6 @@ sub run {
     # workaround for yast popups and
     # detect "Wrong Digest" error to end test earlier
     my @tags = qw(rebootnow yast2_wrong_digest yast2_package_retry yast_error);
-    if (get_var('LIVECD')) {
-        push(@tags, 'screenlock');
-    }
     if (get_var('UPGRADE') || get_var('LIVE_UPGRADE')) {
         push(@tags, 'ERROR-removing-package');
         push(@tags, 'DIALOG-packages-notifications');
@@ -72,38 +104,44 @@ sub run {
     }
     # aarch64 can be particularily slow depending on the hardware
     $timeout *= 2 if check_var('ARCH', 'aarch64') && get_var('MAX_JOB_TIME');
+    # PPC HMC (Power9) performs very slow in general
+    $timeout *= 2 if check_var('BACKEND', 'pvm_hmc') && get_var('MAX_JOB_TIME');
     # encryption, LVM and RAID makes it even slower
     $timeout *= 2 if (get_var('ENCRYPT') || get_var('LVM') || get_var('RAID'));
     # "allpatterns" tests install a lot of packages
     $timeout *= 2 if check_var_array('PATTERNS', 'all');
     # multipath installations seem to take longer (failed some time)
     $timeout *= 2 if check_var('MULTIPATH', 1);
+    # Scale timeout
+    $timeout *= get_var('TIMEOUT_SCALE', 1);
     # on s390 we might need to install additional packages depending on the installation method
     if (check_var('ARCH', 's390x')) {
         push(@tags, 'additional-packages');
     }
-    my $keep_trying                    = 1;
-    my $screenlock_previously_detected = 0;
-    my $mouse_x                        = 1;
-    while ($keep_trying) {
-        if (get_var('LIVECD') && $screenlock_previously_detected) {
-            my $ret = check_screen \@tags, 30;
-            if (!$ret) {
-                diag('installation not finished, move mouse around a bit to keep screen unlocked');
-                $mouse_x = ($mouse_x + 10) % 1024;
-                mouse_set($mouse_x, 1);
-                next;
-            }
-            $timeout -= 30;
-            diag("left total await_install timeout: $timeout");
-            if ($timeout <= 0) {
-                assert_screen \@tags;
-            }
-        }
-        else {
-            assert_screen \@tags, $timeout;
-        }
+    # For poo#64228, we need ensure the timeout value less than the MAX_JOB_TIME
+    my $max_job_time_bound = get_var('MAX_JOB_TIME', 7200) - 1000;
+    record_info("Timeout exceeded", "Computed timeout '$timeout' exceeds max_job_time_bound '$max_job_time_bound', consider decreasing '$timeout' or increasing 'MAX_JOB_TIME'") if $timeout > $max_job_time_bound;
 
+    my $mouse_x = 1;
+    while (1) {
+        die 'timeout hit on during await_install' if $timeout <= 0;
+        my $ret = check_screen \@tags, 30;
+        $timeout -= 30;
+        diag("left total await_install timeout: $timeout");
+        if (!$ret) {
+            if (get_var('LIVECD')) {
+                # The workaround with mouse moving was added, because screen
+                # become disabled after some time without activity on aarch64.
+                # Mouse is moved by 10 pixels, waited for 1 second (this is
+                # needed because it seems like the move is too fast to be detected
+                # on aarch64).
+                diag('installation not finished, move mouse around a bit to keep screen unlocked');
+                mouse_set(($mouse_x + 10) % 1024, 1);
+                sleep 1;
+                mouse_set($mouse_x, 1);
+            }
+            next;
+        }
         if (match_has_tag('yast_error')) {
             die 'YaST error detected. Test is terminated.';
         }
@@ -132,9 +170,8 @@ sub run {
             send_key 'alt-o';    # ok
             next;
         }
-        if (get_var('LIVECD') and match_has_tag('screenlock')) {
+        if (get_var('LIVECD') and (check_screen('screenlock') || check_screen('blackscreen'))) {
             handle_livecd_screenlock;
-            $screenlock_previously_detected = 1;
             next;
         }
         if (match_has_tag('additional-packages')) {
@@ -149,8 +186,15 @@ sub run {
         last;
     }
 
-    # Stop reboot countdown for e.g. uploading logs
-    unless (get_var("REMOTE_CONTROLLER") || is_caasp) {
+    if (get_var('USE_SUPPORT_SERVER') && get_var('USE_SUPPORT_SERVER_REPORT_PKGINSTALL')) {
+        my $jobid_server = (get_parents())->[0] or die "USE_SUPPORT_SERVER_REPORT_PKGINSTALL set, but no parent supportserver job found";
+        # notify the supportserver about current status (e.g.: meddle_multipaths.pm)
+        mutex_create("client_pkginstall_done", $jobid_server);
+        record_info("Disk I/O", "Mutex \"client_pkginstall_done\" created");
+    }
+
+    # Stop reboot countdown where necessary for e.g. uploading logs
+    unless (check_var('REBOOT_TIMEOUT', 0) || get_var("REMOTE_CONTROLLER") || is_caasp || (is_sle('=11-sp4') && check_var('ARCH', 's390x') && check_var('BACKEND', 's390x'))) {
         # Depending on the used backend the initial key press to stop the
         # countdown might not be evaluated correctly or in time. In these
         # cases we keep hitting the keys until the countdown stops.

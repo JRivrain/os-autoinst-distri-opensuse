@@ -8,9 +8,10 @@
 # without any warranty.
 
 # Summary: yast2 snapper test for ncurses
-# Maintainer: Wei Jiang <wjiang@suse.com>
+# Maintainer: Lemon <leli@suse.com>
 
-use base qw(y2snapper_common console_yasttest);
+use base qw(y2snapper_common y2_module_consoletest);
+
 use strict;
 use warnings;
 use testapi;
@@ -21,16 +22,17 @@ sub run {
     select_console 'root-console';
     zypper_call('in yast2-snapper');
 
-    my $module_name = y2logsstep::yast2_console_exec(yast2_module => 'snapper');
+    $self->y2snapper_adding_new_snapper_conf;
+    my $module_name = y2_module_consoletest::yast2_console_exec(yast2_module => 'snapper');
 
     $self->y2snapper_new_snapshot(1);
     wait_serial("$module_name-0") || die "yast2 snapper failed";
 
-    $self->y2snapper_untar_testfile;
+    $self->y2snapper_apply_filesystem_changes;
 
-    $module_name = y2logsstep::yast2_console_exec(yast2_module => 'snapper');
+    $module_name = y2_module_consoletest::yast2_console_exec(yast2_module => 'snapper');
     $self->y2snapper_show_changes_and_delete(1);
-    $self->y2snapper_clean_and_quit($module_name);
+    $self->y2snapper_clean_and_quit($module_name, 1);
 }
 
 sub post_fail_hook {

@@ -13,6 +13,22 @@
 #   If all succeed, the test passes.
 #
 #   The test requires the Web and Scripting module on SLE
+# - Setup apache2 to use php7 modules
+# - Install php7-pgsql postgresql*-contrib sudo
+# - Start postgresql service
+# - Populate postgresql with test db from data dir
+# - Run a select command
+# - Setup postgresql (password, access control)
+# - Grab php test file from datadir
+# - Run "curl --no-buffer http://localhost/test_postgresql_connector.php | grep 'can you read this?'"
+# - Run select on database to check inclusion
+# - Set PG_OLDEST, PG_LATEST and run a set of tests
+#   - Create a new database
+#   - Start/Stop/Status a database
+#   - Upgrade a postgresql instance
+#   - Cleanup database
+# - Import and run dvdrental test
+# - Cleanup postgresql database
 # Maintainer: Ondřej Súkup <osukup@suse.cz>
 
 
@@ -20,8 +36,9 @@ use base "consoletest";
 use strict;
 use warnings;
 use testapi;
-use utils;
-use apachetest;
+use utils 'zypper_call';
+use apachetest qw(setup_apache2 setup_pgsqldb test_pgsql destroy_pgsqldb postgresql_cleanup);
+use Utils::Systemd 'systemctl';
 
 sub run {
     select_console 'root-console';
@@ -30,7 +47,7 @@ sub run {
     setup_apache2(mode => 'PHP7');
 
     # install requirements, all postgresql versions to test db upgrade if there are multiple versions
-    zypper_call 'in php7-pgsql postgresql*-contrib sudo';
+    zypper_call 'in php7-pgsql postgresql*-contrib sudo unzip';
 
     # start postgresql service
     systemctl 'start postgresql';
@@ -43,5 +60,9 @@ sub run {
 
     # destroy database
     destroy_pgsqldb;
+
+    # poo#62000
+    postgresql_cleanup;
 }
+
 1;

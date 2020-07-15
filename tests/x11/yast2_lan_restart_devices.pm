@@ -8,15 +8,26 @@
 # without any warranty.
 
 # Summary: YaST logic on Network Restart while no config changes were made
+# - Launch xterm as root, stop firewalld
+# - Put network in debug mode (DEBUG="yes" on /etc/sysconfig/network/config)
+# - Launch yast2 lan
+# - Add a device type brigde (dhcp)
+# - Add a device type bond
+# - Add a device type vlan
+# - Select the device
+# - Check the network status for each device (if network was restarted after
+# changes made)
+# - Delete all created devices
 # Maintainer: Joaquín Rivera <jeriveramoya@suse.com>
 # Tags: fate#318787 poo#11450
 
-use base 'y2logsstep';
-
+use base 'y2_installbase';
 use strict;
 use warnings;
 use testapi;
 use y2lan_restart_common qw(initialize_y2lan open_network_settings close_network_settings check_network_status);
+use version_utils 'is_sle';
+use Utils::Architectures 'is_s390x';
 
 sub check_bsc1111483 {
     return 0 unless match_has_tag('yast2_lan_device_bsc1111483');
@@ -35,7 +46,7 @@ sub add_device {
         send_key_until_needlematch 'yast2_lan_select_eth_card', 'down';
         send_key 'alt-i';    # Edit NIC
         assert_screen 'yast2_lan_network_card_setup';
-        send_key 'alt-k';             # No link (Bonding Slavees)
+        send_key 'alt-k';    # No link (Bonding Slavees)
         send_key 'alt-n';
         assert_screen 'yast2_lan';    # yast2 lan overview tab
     }
@@ -139,19 +150,26 @@ sub check_device {
 
     add_device($device);
     select_special_device_tab($device);
-    check_network_status('', $device);
+    check_network_status('no_restart_or_reload', $device);
     delete_device($device);
 }
 
 sub run {
     initialize_y2lan;
-    check_device($_) foreach qw(bridge bond VLAN);
+    my @devices = qw(bridge VLAN);
+    if (is_sle('<=12-SP5') && is_s390x()) {
+        record_soft_failure 'bsc#1145943';
+    } else {
+        push @devices, 'bond';
+    }
+
+    check_device($_) foreach @devices;
     type_string "killall xterm\n";
 }
 
 sub post_fail_hook {
     my ($self) = @_;
-    assert_script_run 'journalctl -b > /tmp/journal', 90;
+    assert_script_run 'journalctl -b -o short-precise > /tmp/journal', 90;
     upload_logs '/tmp/journal';
     $self->SUPER::post_fail_hook;
 }

@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright © 2016-2018 SUSE LLC
+# Copyright © 2016-2020 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -9,6 +9,15 @@
 
 # Summary: Test installation of salt-master as well as salt-minion on same
 #  machine. Test simple operation with loopback.
+# - Add suse connect product according to distribution in test
+# - Stop packagekit service
+# - Install salt-master salt-minion
+# - Start salt-master service, check its status
+# - Configure and start salt-minion, check its status
+# - Run "salt-run state.event tagmatch="salt/auth" quiet=True count=1"
+# - Run "salt-key --accept-all -y"
+# - Ping the minion. If fails, try again 7 times.
+# - Stop both minion and master
 # Maintainer: Oliver Kurz <okurz@suse.de>
 # Tags: fate#318875, fate#320919
 
@@ -49,9 +58,8 @@ EOF
     assert_script_run("salt-key --accept-all -y");
     # try to ping the minion. If it does not respond on the first try the ping
     # might have gone lost so try more often. Also see bsc#1069711
-    unless (script_run 'salt \'*\' test.ping') {
-        assert_script_run 'for i in {1..7}; do echo "try $i" && salt \'*\' test.ping -t30 && break; done';
-    }
+    assert_script_run 'for i in {1..7}; do echo "try $i" && salt \'*\' test.ping -t30 && break; done', timeout => 300;
+
     systemctl 'stop salt-master salt-minion', timeout => 120;
 }
 

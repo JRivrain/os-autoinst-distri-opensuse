@@ -1,6 +1,6 @@
 # openssl fips test
 #
-# Copyright © 2016-2019 SUSE LLC
+# Copyright © 2016-2020 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -10,9 +10,8 @@
 # Summary: FIPS : openssl should only list FIPS approved cryptographic functions
 #                 while system is working in fips mode
 #
-# Original Author: Qingming Su <qingming.su@suse.com>
 # Maintainer: Ben Chou <bchou@suse.com>
-# Tags: poo#44831
+# Tags: poo#44831, poo#65375
 
 use base "consoletest";
 use testapi;
@@ -63,6 +62,10 @@ sub run {
           sub { m/^Invalid Pubkey: 0$/ };
     }
 
+}
+
+sub test_flags {
+    return {fatal => 0};
 }
 
 1;

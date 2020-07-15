@@ -8,7 +8,12 @@
 # without any warranty.
 
 # Summary: Case 1503968 - Gnome: Window Switcher works with ALT+TAB
-# Maintainer: Chingkai <qkzhu@suse.com>
+# - Launch nautilus and minimize
+# - Launch gedit and minimize
+# - Launch totem and minimize
+# - Switch windows using ALT-TAB and check
+# - Switch windows using ALT-TAB and close applications using ALT-F4
+# Maintainer: Zhaocong Jia <zcjia@suse.com> Grace Wang <grace.wang@suse.com>
 
 use base "x11test";
 use strict;

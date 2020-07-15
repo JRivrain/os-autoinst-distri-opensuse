@@ -1,11 +1,15 @@
-# Copyright (C) 2018 SUSE LLC
+# Copyright (C) 2018-2020 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
 # notice and this notice are preserved.  This file is offered as-is,
 # without any warranty.
 
-# Summary: Check for network daemon
+# Summary: Check that the network daemon in use is the expected one
+# - check which network daemon is in use
+# - based on the system (SLE, JeOS, SLED, openSUSE), check that
+#   the running daemon is the expected one (wicked, wicked, NetworkManager, NetworkManager)
+# - check if network daemon is installed, enabled and running
 # Maintainer: Dominik Heidler <dheidler@suse.de>
 
 use base 'consoletest';
@@ -16,7 +20,10 @@ use utils;
 use version_utils;
 
 sub run {
-    select_console 'root-console';
+    my $self = shift;
+    $self->select_serial_terminal;
+
+    zypper_call('in systemd-network', exitcode => [0, 104]);
 
     assert_script_run 'ip a';
 
@@ -31,26 +38,29 @@ sub run {
 
     record_info $network_daemon, "$network_daemon was detected as the configured network daemon for this system.";
 
-    my $expected = 'NetworkManager';
-    my $reason   = 'DESKTOP!=textmode';
+    my $expected   = 'NetworkManager';
+    my $unexpected = 'wicked';
+    my $reason     = 'DESKTOP!=textmode';
 
     if (is_sle) {
         if (is_server) {
-            $expected = 'wicked';
-            $reason   = 'SLES';
+            $expected   = 'wicked';
+            $unexpected = 'NetworkManager';
+            $reason     = 'SLES';
         }
         elsif (is_jeos) {
-            $expected = 'wicked';
-            $reason   = 'JeOS';
+            $expected   = 'wicked';
+            $unexpected = 'NetworkManager';
+            $reason     = 'JeOS';
         }
         else {
-            $expected = 'NetworkManager';
-            $reason   = 'SLED';
+            $reason = 'SLED';
         }
     }
     elsif (check_var('DESKTOP', 'textmode')) {
-        $expected = 'wicked';
-        $reason   = 'DESKTOP=textmode';
+        $expected   = 'wicked';
+        $unexpected = 'NetworkManager';
+        $reason     = 'DESKTOP=textmode';
     }
 
     if ($expected ne $network_daemon) {
@@ -63,6 +73,9 @@ sub run {
     systemctl "is-active $network_daemon";
     systemctl "status $network_daemon";
     assert_script_run(($network_daemon eq "wicked") ? 'wicked show all' : 'nmcli');
+
+    systemctl("is-enabled $unexpected", expect_false => 1);
+    systemctl("is-active $unexpected",  expect_false => 1);
 }
 
 1;

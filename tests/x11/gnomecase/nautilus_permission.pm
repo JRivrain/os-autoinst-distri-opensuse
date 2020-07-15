@@ -9,6 +9,14 @@
 # without any warranty.
 
 # Summary: case 1436125-use nautilus to change file permissions
+# - Create a test file called "newfile"
+# - Launch nautilus
+# - Right click "newfile" (or send "SHIFT-F10") and check
+# - Send "r" (properties)
+# - Open permissions tab and change some permitions
+# - Close nautilus dialog
+# - Right click, open permissions again, check if permittions were changed
+# - Close nautilus
 # Maintainer: Xudong Zhang <xdzhang@suse.com>
 
 use base "x11test";
@@ -23,7 +31,7 @@ sub run {
     x11_start_program('nautilus');
     send_key_until_needlematch 'nautilus-newfile-matched', 'right', 15;
     if (is_sle('15+') || is_leap('15.0+') || is_tumbleweed) {
-        assert_and_click 'nautilus-newfile-matched', 'right';
+        assert_and_click('nautilus-newfile-matched', button => 'right');
         record_soft_failure 'boo#1074057 qemu can not properly capture some keys in nautilus under GNOME wayland';
     }
     else {
@@ -47,7 +55,7 @@ sub run {
     send_key "esc";      #close the dialog
                          #reopen the properties menu to check if the changes kept
     if (is_sle('15+') || is_leap('15.0+') || is_tumbleweed) {
-        assert_and_click 'nautilus-newfile-matched', 'right';
+        assert_and_click('nautilus-newfile-matched', button => 'right');
     }
     else {
         send_key "shift-f10";

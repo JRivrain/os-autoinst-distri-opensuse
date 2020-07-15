@@ -8,16 +8,24 @@
 # without any warranty.
 
 # Summary: YaST logic on Network Restart while no config changes were made
+# - Launch xterm as root, stop firewalld
+# - Put network in debug mode (DEBUG="yes" on /etc/sysconfig/network/config)
+# - Launch yast2 lan, check network status
+# - Set ip, mask, hostname and check if /etc/hosts reflects the changes
+# - If not managed by network manager, do the following
+#   - Check network card setup, hardware and general tabs
+#   - Check network card routing tab (add 10.0.2.2 as default ipv4 route)
+#   - Check hardware device name, edit card, change name to "dyn0",
 # Maintainer: Zaoliang Luo <zluo@suse.com>
 # Tags: fate#318787 poo#11450
 
-use base 'y2logsstep';
-
+use base 'y2_module_guitest';
 use strict;
 use warnings;
 use testapi;
 use y2lan_restart_common;
-use y2_common 'is_network_manager_default';
+use y2_module_basetest 'is_network_manager_default';
+use version_utils ':VERSION';
 
 sub check_network_settings_tabs {
     send_key 'alt-g';    # Global options tab
@@ -59,8 +67,12 @@ sub change_hw_device_name {
 
     send_key 'alt-i';        # Edit NIC
     assert_screen 'yast2_lan_network_card_setup';
-    send_key 'alt-w';        # Hardware tab
-    assert_screen 'yast2_lan_hardware_tab';
+    if (is_sle('15-SP2+')) {
+        send_key 'alt-g';    # Starting with SLE15 SP2, "Device name" field is shown in General tab
+    } else {
+        send_key 'alt-w';    # Hardware tab
+        assert_screen 'yast2_lan_hardware_tab';
+    }
     send_key 'alt-e';        # Change device name
     assert_screen 'yast2_lan_device_name';
     send_key 'tab' for (1 .. 2);
@@ -78,18 +90,16 @@ sub run {
     unless (is_network_manager_default) {
         # Run detailed check only if explicitly configured in the test suite
         check_etc_hosts_update() if get_var('VALIDATE_ETC_HOSTS');
-        verify_network_configuration(\&check_network_card_setup_tabs);
+        record_info "check_network_card_setup_tabs";
+        my $service_status_after_conf = (is_sle('<=15')) ? 'no_restart_or_reload' : 'reload';
+        verify_network_configuration(\&check_network_card_setup_tabs, $service_status_after_conf);
+        record_info "check_default_gateway";
         verify_network_configuration(\&check_default_gateway);
-        verify_network_configuration(\&change_hw_device_name, 'dyn0', 'restart');
+        record_info "change_hw_device_name";
+        $service_status_after_conf = (is_sle('<=15-SP1')) ? 'restart' : 'reload';
+        verify_network_configuration(\&change_hw_device_name, $service_status_after_conf, 'dyn0');
     }
     type_string "killall xterm\n";
-}
-
-sub post_fail_hook {
-    my ($self) = @_;
-    assert_script_run 'journalctl -b > /tmp/journal', 90;
-    upload_logs '/tmp/journal';
-    $self->SUPER::post_fail_hook;
 }
 
 sub test_flags {

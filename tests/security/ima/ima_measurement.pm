@@ -1,4 +1,4 @@
-# Copyright (C) 2019 SUSE LLC
+# Copyright (C) 2019-2020 SUSE LLC
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -14,7 +14,7 @@
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 #
 # Summary: Test IMA measurement function
-# Maintainer: wnereiz <wnereiz@member.fsf.org>
+# Maintainer: llzhao <llzhao@suse.com>
 # Tags: poo#48374
 
 use base "opensusebasetest";
@@ -33,18 +33,22 @@ sub run {
     my $meas_tmpfile = "/tmp/ascii_runtime_measurements";
     my $sample_file  = "/tmp/sample.txt";
 
-    add_grub_cmdline_settings('ima_policy=tcb', 1);
+    add_grub_cmdline_settings('ima_policy=tcb', update_grub => 1);
 
     # Reboot to make settings work
     power_action('reboot', textmode => 1);
     $self->wait_boot;
     $self->select_serial_terminal;
 
+    # Upload files for reference before test dies
+    assert_script_run("cp $meas_file $meas_tmpfile");
+    upload_logs "$meas_tmpfile";
+
     # Format verification
     assert_script_run(
-        "head -n1 $meas_file |grep '^10\\s*[a-fA-F0-9]\\{40\\}\\s*ima-ng\\s*sha1:0\\{40\\}\\s*boot_aggregate'",
+        "head -n1 $meas_file |grep '^10\\s*[a-fA-F0-9]\\{40\\}\\s*ima-ng\\s*sha256:0\\{64\\}\\s*boot_aggregate'",
         timeout      => '60',
-        fail_messege => 'boot_aggregate item check failed'
+        fail_message => 'boot_aggregate item check failed'
     );
 
     my $out = script_output("grep '^10\\s*[a-fA-F0-9]\\{40\\}\\s*ima-ng\\s*sha256:[a-fA-F0-9]\\{64\\}\\s*\\/' $meas_file |wc -l");
@@ -55,9 +59,6 @@ sub run {
     my $sample_sha      = script_output("sha256sum $sample_file |cut -d' ' -f1");
     my $sample_meas_sha = script_output("grep '$sample_file' $meas_file |awk -F'[ :]' '{print \$5}'");
     die 'The SHA256 values does not match' if ($sample_sha ne $sample_meas_sha);
-
-    assert_script_run("cp $meas_file $meas_tmpfile");
-    upload_logs "$meas_tmpfile";
 }
 
 sub test_flags {

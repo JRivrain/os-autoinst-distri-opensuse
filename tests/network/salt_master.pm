@@ -9,82 +9,95 @@
 
 # Summary: Test Salt stack on two machines. Here we test mainly the
 #  master but minion is also present just for having more of those.
+# - Install salt-master
+#   - Enable debug
+#   - Enable, start and check salt-master service
+#   - Enable event logging
+# - Install salt-minion
+#   - Set hostname
+#   - Enable debug
+#   - Enable, start and check salt-minion service
+# - Create mutex lock for tests
+# - List and accept both minions when they are ready
+# - Inform minion that keys were accepted
+# - Try to ping both minions
+# - Run a command and wait for minion
+# - Fetch top.sls from datadir
+# - Install a package and wait for the minion
+# - Create user and group and wait for the minion
+# - Set sysctl key and wait for the minion
+# - Stop both master and minion at the end
 # Maintainer: Pavel Dostal <pdostal@suse.cz>
 
-use base "consoletest";
+use base "saltbase";
 use strict;
 use warnings;
 use testapi;
 use lockapi;
-use y2x11test 'setup_static_mm_network';
-use utils qw(zypper_call systemctl);
+use utils qw(script_retry zypper_call);
 
 sub run {
+    my $self = shift;
     select_console 'root-console';
 
-    # Install both salt master and minion and run the master daemon
-    zypper_call("in salt-master salt-minion");
-    systemctl("start salt-master");
-    systemctl("status salt-master");
+    # Install, configure and start the salt master
+    $self->master_prepare();
 
-    # Set the right address of the salt master and run the minion
-    assert_script_run('sed -i -e "s/#master: salt/master: 10.0.2.101/" /etc/salt/minion');
-    systemctl("start salt-minion");
-    systemctl("status salt-minion");
+    # Install, configure and start the salt minion
+    $self->minion_prepare();
 
-    # before accepting the key, wait until the minion is fully started (systemd might be not reliable)
-    assert_script_run('salt-run state.event tagmatch="salt/auth" quiet=True count=1', timeout => 300);
+    # Both machines are ready
     barrier_wait 'SALT_MINIONS_READY';
 
     # List and accept both minions when they are ready
-    assert_script_run("salt-key -L");
-    assert_script_run("salt-key --accept-all -y");
-    assert_script_run "salt '*' test.ping";
+    script_retry('salt-key -L -l unaccepted | grep "master"', delay => 15, retry => 15);
+    script_retry('salt-key -L -l unaccepted | grep "minion"', delay => 15, retry => 15);
+    assert_script_run('salt-run state.event tagmatch="salt/auth" count=1',                                                                timeout => 300);
+    assert_script_run("(sleep 5 && salt-key -A -y ) & salt-run state.event tagmatch='salt/minion/*/start' count=2 && salt '*' test.ping", timeout => 360);
+
+    # Inform minion that keys were accepted
+    mutex_create 'SALT_KEYS_ACCEPTED';
+    assert_script_run('salt-call test.ping', timeout => 360);
+
+    # Try to ping both minions
+    record_info 'test.ping';
+    assert_script_run("salt --state-output=terse -t 360 '*' test.ping", timeout => 360);
 
     # Run a command and wait for minion
-    assert_script_run("salt '*' cmd.run 'touch /tmp/salt_touch'", 180);
+    record_info 'cmd.run touch';
+    assert_script_run("salt --state-output=terse -t 300 '*' cmd.run 'touch /tmp/salt_touch'", 300);
     mutex_create 'SALT_TOUCH';
 
+    # Add top.sls
+    assert_script_run("curl -s " . data_url('salt/top.sls') . " -o /srv/salt/top.sls");
+
     # Install a package and wait for the minion
-    assert_script_run(qq(echo "---
-sysstat:
-  pkg.installed" > /srv/salt/pkg.sls));
-    assert_script_run(qq(echo "---
-base:
-  '*':
-    - pkg" > /srv/salt/top.sls));
-    assert_script_run("salt '*' state.highstate", 180);
+    record_info 'pkg.installed';
+    zypper_call 'in -fy --download-only sysstat';
+    assert_script_run "mv `find /var/cache/zypp/packages/ | grep sysstat | head -n1` /srv/salt/sysstat.rpm";
+    assert_script_run("curl -s " . data_url('salt/pkg.sls') . " -o /srv/salt/pkg.sls");
+    assert_script_run("echo '    - pkg' >> /srv/salt/top.sls");
+    assert_script_run("salt --state-output=terse -t 300 '*' state.highstate", 300);
+    assert_script_run("sed -i '/- pkg/d' /srv/salt/top.sls");
     mutex_create 'SALT_STATES_PKG';
 
     # Create user and group and wait for the minion
-    assert_script_run(qq(echo "---
-salttestgroup:
-  group.present
-
-salttestuser:
-  user.present:
-    - fullname: Salt Test
-    - shell: /usr/bin/sh
-    - home: /home/salttestuser
-    - groups:
-      - salttestgroup" > /srv/salt/user.sls));
+    record_info "group.present user.present";
+    assert_script_run("curl -s " . data_url('salt/user.sls') . " -o /srv/salt/user.sls");
     assert_script_run("echo '    - user' >> /srv/salt/top.sls");
-    assert_script_run("salt '*' state.highstate", 180);
+    assert_script_run("salt --state-output=terse -t 300 '*' state.highstate", 300);
     mutex_create 'SALT_STATES_USER';
 
     # Set sysctl key and wait for the minion
-    assert_script_run(qq(echo "---
-net.ipv4.ip_forward:
-  sysctl.present:
-    - value: 1" > /srv/salt/sysctl.sls));
+    record_info "sysctl.present";
+    assert_script_run("curl -s " . data_url('salt/sysctl.sls') . " -o /srv/salt/sysctl.sls");
     assert_script_run("echo '    - sysctl' >> /srv/salt/top.sls");
-    assert_script_run("salt '*' state.highstate", 180);
+    assert_script_run("salt --state-output=terse -t 300 '*' state.highstate", 300);
     mutex_create 'SALT_STATES_SYSCTL';
 
     # Stop both master and minion at the end
     barrier_wait 'SALT_FINISHED';
-    systemctl 'stop salt-master';
-    systemctl 'stop salt-minion';
+    $self->stop();
 }
 
 1;

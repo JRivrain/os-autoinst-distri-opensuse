@@ -1,7 +1,7 @@
 # SUSE's openQA tests
 #
 # Copyright © 2009-2013 Bernhard M. Wiedemann
-# Copyright © 2012-2016 SUSE LLC
+# Copyright © 2012-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -9,27 +9,37 @@
 # without any warranty.
 
 # Summary: Test the integration between SSSD and its various backends - file database, LDAP, and Kerberos
+# - If distro is sle >= 15, add Packagehub and sle-module-legacy products
+# - Install sssd, sssd-krb5, sssd-krb5-common, sssd-ldap, sssd-tools, openldap2,
+# openldap2-client, krb5, krb5-client, krb5-server, krb5-plugin-kdb-ldap
+# - If sle<15, install python-pam. Otherwise, install python3-python-pam
+# - If textmode, install psmisc
+# - Fetch "version_utils.sh" and "sssd-tests" from datadir
+# - Run the following test scenarios: ldap, ldap-no-auth, ldap-nested-groups,
+# krb. Run also "local" scenario, unless sssd version is 2.0+
+# - Fetch test data from each scenario from datadir/sssd-tests
+# - For each test scenario, run "test.sh" script and check output for "junit
+# testsuite", "junit success", "junit endsuite", otherwise record as failure
 # Maintainer: HouzuoGuo <guohouzuo@gmail.com>
 
-use base "opensusebasetest";
+use base "consoletest";
+
 use strict;
 use warnings;
+
 use testapi;
-use utils;
-use version;
+use utils 'zypper_call';
 use version_utils qw(is_sle is_opensuse);
 use registration "add_suseconnect_product";
 
 sub run {
-    # Assume consoletest_setup is completed
-    select_console 'root-console';
+    my ($self) = @_;
+    $self->select_serial_terminal;
+
     if (is_sle) {
         assert_script_run 'source /etc/os-release';
         if (is_sle '>=15') {
-            if (script_run('SUSEConnect -p PackageHub/${VERSION_ID}/${CPU}', 300) != 0) {
-                record_soft_failure 'bsc#1124318 - Fail to get PackageHub Pool Metadata - running the command again as a workaround';
-                assert_script_run 'SUSEConnect -p PackageHub/${VERSION_ID}/${CPU}', 300;
-            }
+            add_suseconnect_product('PackageHub', undef, undef, undef, 300, 1);
             add_suseconnect_product('sle-module-legacy');
         }
     }
@@ -42,17 +52,16 @@ sub run {
     );
 
     # for sle 12 we still use and support python2
-    push @test_subjects, 'python-pam' if is_sle('<15');
+    push @test_subjects, 'python-pam'         if is_sle('<15');
     push @test_subjects, 'python3-python-pam' if is_sle('15+') || is_opensuse;
 
-    systemctl 'stop packagekit.service';
-    systemctl 'mask packagekit.service';
     if (check_var('DESKTOP', 'textmode')) {    # sssd test suite depends on killall, which is part of psmisc (enhanced_base pattern)
-        assert_script_run "zypper -n in psmisc";
+        zypper_call "in psmisc";
     }
-    script_run "zypper -n refresh && zypper -n in @test_subjects";
-    script_run "cd; curl -L -v " . autoinst_url . "/data/lib/version_utils.sh > /usr/local/bin/version_utils.sh";
-    script_run "cd; curl -L -v " . autoinst_url . "/data/sssd-tests > sssd-tests.data && cpio -id < sssd-tests.data && mv data sssd && ls sssd";
+    zypper_call "refresh";
+    zypper_call "in @test_subjects";
+    assert_script_run "cd; curl -L -v " . autoinst_url . "/data/lib/version_utils.sh > /usr/local/bin/version_utils.sh";
+    assert_script_run "cd; curl -L -v " . autoinst_url . "/data/sssd-tests > sssd-tests.data && cpio -id < sssd-tests.data && mv data sssd && ls sssd";
 
     # Get sssd version, as 2.0+ behaves differently
     my $sssd_version = script_output('rpm -q sssd --qf \'%{VERSION}\'');
@@ -71,9 +80,9 @@ sub run {
 
     foreach my $scenario (@scenario_list) {
         # Download the source code of test scenario
-        script_run "cd ~/sssd && mkdir $scenario && curl -L -v " . autoinst_url . "/data/sssd-tests/$scenario > $scenario/cdata";
+        script_run "cd ~/sssd && curl -L -v " . autoinst_url . "/data/sssd-tests/$scenario > $scenario/cdata";
         script_run "cd $scenario && cpio -idv < cdata && mv data/* ./; ls";
-        validate_script_output "./test.sh", sub {
+        validate_script_output 'bash -x test.sh', sub {
             (/junit testsuite/ && /junit success/ && /junit endsuite/) or push @scenario_failures, $scenario;
         }, 120;
     }

@@ -1,14 +1,22 @@
 # SUSE's openQA tests
 #
-# Copyright © 2016-2019 SUSE LLC
+# Copyright © 2016-2020 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
 # notice and this notice are preserved.  This file is offered as-is,
 # without any warranty.
 
-# Summary: Change password in GNOME and check if it's accepted everywhere
-#  Testtopia: tc#1503803 tc#1503905; entry for tc#1503973
+# Summary: in GNOME, change password for current user and check that it's
+# accepted everywhere. Create then a new user and login with it.
+# - change password for current user
+# - add new user
+# - lock and unlock screen for current user
+# - logout and login with current user
+# - switch to the newly created user
+# - login with the new user
+# - switch back to original user
+# - restore password to its original value
 # Maintainer: chuchingkai <chuchingkai@gmail.com>
 
 use base "x11test";
@@ -18,7 +26,8 @@ use testapi;
 use utils;
 use power_action_utils 'reboot_x11';
 use version_utils;
-use x11utils 'handle_logout';
+use x11utils;
+use main_common 'opensuse_welcome_applicable';
 
 #testcase 5255-1503803: Gnome:Change Password
 
@@ -29,15 +38,14 @@ my $pwd4newUser = "helloWORLD-0";
 sub lock_screen {
     assert_and_click "system-indicator";
     assert_and_click "lock-system";
-    send_key "esc";
-    assert_screen 'gnome-screenlock-password';
+    send_key_until_needlematch 'gnome-screenlock-password', 'esc', 5, 10;
     type_password "$newpwd\n";
     assert_screen "generic-desktop";
 }
 
 sub logout_and_login {
     handle_logout;
-    assert_screen 'displaymanager';
+    send_key_until_needlematch 'displaymanager', 'esc', 9, 10;
     mouse_hide();
     wait_still_screen;
     assert_and_click "displaymanager-$username";
@@ -49,16 +57,16 @@ sub logout_and_login {
 sub reboot_system {
     my ($self) = @_;
     reboot_x11;
-    $self->{await_reboot} = 1;
-    $self->wait_boot(nologin => 1);
     if (check_var('NOAUTOLOGIN', 1)) {
+        $self->{await_reboot} = 1;
+        $self->wait_boot(nologin => 1);
         assert_screen "displaymanager", 200;
         $self->{await_reboot} = 0;
-        # The keyboard focus is different between SLE15 and SLE12
-        send_key 'up' if is_sle('15+');
-        send_key "ret";
+        assert_and_click "displaymanager-$username";
         wait_still_screen;
         type_string "$newpwd\n";
+    } else {
+        $self->wait_boot();
     }
     assert_screen "generic-desktop";
 }
@@ -136,6 +144,8 @@ sub run {
     assert_and_click 'displaymanager-test';
     assert_screen "testUser-login-dm";
     type_string "$pwd4newUser\n";
+    # Handle welcome screen, when needed
+    handle_welcome_screen(timeout => 120) if (opensuse_welcome_applicable);
     assert_screen "generic-desktop", 120;
     switch_user;
     send_key "esc";
@@ -157,12 +167,6 @@ sub run {
     type_password "$password\n";
     assert_screen "password-changed-terminal";
 
-    #delete the added user: test
-    # We should kill the active user test in SLE15
-    assert_script_run 'loginctl terminate-user test' if is_sle('15+') || is_tumbleweed;
-    wait_still_screen;
-    type_string "userdel -f test\n";
-    assert_screen "user-test-deleted";
     send_key "alt-f4";
     send_key "ret";
 

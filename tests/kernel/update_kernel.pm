@@ -20,10 +20,29 @@ use version_utils 'is_sle';
 use qam;
 use kernel 'remove_kernel_packages';
 use power_action_utils 'power_action';
+use repo_tools 'add_qa_head_repo';
 use Utils::Backends 'use_ssh_serial_console';
 
 
 my $wk_ker = 0;
+
+# kernel-azure is never released in pool, first release is in updates.
+# Fix the chicken & egg problem manually.
+sub first_azure_release {
+    my $repo = shift;
+
+    remove_kernel_packages();
+    fully_patch_system;
+
+    my @repos = split(",", $repo);
+    while (my ($i, $val) = each(@repos)) {
+        zypper_call("ar $val kernel-update-$i");
+    }
+
+    zypper_call("ref");
+    zypper_call("in -l kernel-azure", exitcode => [0, 100, 101, 102, 103], timeout => 700);
+    zypper_call('in kernel-devel');
+}
 
 sub prepare_azure {
     remove_kernel_packages();
@@ -34,6 +53,7 @@ sub update_kernel {
     my ($repo, $incident_id) = @_;
 
     fully_patch_system;
+    zypper_call('in kernel-devel') if is_sle('12+');
 
     my @repos = split(",", $repo);
     while (my ($i, $val) = each(@repos)) {
@@ -74,18 +94,26 @@ sub kgraft_state {
     if (is_sle('<=12-SP1')) {
         script_run("lsinitrd /boot/initrd-$kver-xen | grep patch");
         save_screenshot;
-        script_run("lsinitrd /boot/initrd-$kver-xen | awk '/-patch-.*ko\$/ || /livepatch-.*ko\$/ {print \$NF}' > /dev/$serialdev", 0);
-        ($module) = wait_serial(qr/lib*/) =~ /(^.*ko)\s+/;
+        $module = script_output("lsinitrd /boot/initrd-$kver-xen | awk '/-patch-.*ko\$/ || /livepatch-.*ko\$/ {print \$NF}' > /dev/$serialdev");
 
-        mod_rpm_info($module);
+        if (check_var('REMOVE_KGRAFT', '1')) {
+            die 'Kgraft module exists when it should have been removed' if $module;
+        }
+        else {
+            mod_rpm_info($module);
+        }
     }
 
     script_run("lsinitrd /boot/initrd-$kver-default | grep patch");
     save_screenshot;
-    script_run("lsinitrd /boot/initrd-$kver-default | awk '/-patch-.*ko\$/ || /livepatch-.*ko\$/ {print \$NF}' > /dev/$serialdev", 0);
-    ($module) = wait_serial(qr/lib*/) =~ /(^.*ko)\s+/;
+    $module = script_output("lsinitrd /boot/initrd-$kver-default | awk '/-patch-.*ko\$/ || /livepatch-.*ko\$/ {print \$NF}' > /dev/$serialdev");
 
-    mod_rpm_info($module);
+    if (check_var('REMOVE_KGRAFT', '1')) {
+        die 'Kgraft module exists when it should have been removed' if $module;
+    }
+    else {
+        mod_rpm_info($module);
+    }
 
     script_run("uname -a");
     save_screenshot;
@@ -94,24 +122,38 @@ sub kgraft_state {
 sub install_lock_kernel {
     my $version = shift;
     if ($version eq '4.12.14-25.13.1')     { $wk_ker = 1; }
-    if ($version eq '3.12.74-60.64.104.1') { $wk_ker = 2; }
+    if ($version eq '4.12.14-197.15.1')    { $wk_ker = 2; }
+    if ($version eq '3.12.74-60.64.104.1') { $wk_ker = 3; }
     # version numbers can be 'out of sync'
     my $numbering_exception = {
         'kernel-source' => {
-            '4.4.59-92.17.3'  => '4.4.59-92.17.2',
-            '4.4.114-94.11.3' => '4.4.114-94.11.2',
-            '4.4.126-94.22.1' => '4.4.126-94.22.2',
+            '4.4.59-92.17.3'   => '4.4.59-92.17.2',
+            '4.4.114-94.11.3'  => '4.4.114-94.11.2',
+            '4.4.126-94.22.1'  => '4.4.126-94.22.2',
+            '4.4.178-94.91.2'  => '4.4.178-94.91.1',
+            '4.12.14-150.14.2' => '4.12.14-150.14.1',
         },
         'kernel-macros' => {
-            '4.4.59-92.17.3'  => '4.4.59-92.17.2',
-            '4.4.114-94.11.3' => '4.4.114-94.11.2',
-            '4.4.126-94.22.1' => '4.4.126-94.22.2',
+            '4.4.59-92.17.3'   => '4.4.59-92.17.2',
+            '4.4.114-94.11.3'  => '4.4.114-94.11.2',
+            '4.4.126-94.22.1'  => '4.4.126-94.22.2',
+            '4.4.178-94.91.2'  => '4.4.178-94.91.1',
+            '4.12.14-150.14.2' => '4.12.14-150.14.1',
+        },
+        'kernel-devel' => {
+            '4.4.59-92.17.3'   => '4.4.59-92.17.2',
+            '4.4.114-94.11.3'  => '4.4.114-94.11.2',
+            '4.4.126-94.22.1'  => '4.4.126-94.22.2',
+            '4.4.178-94.91.2'  => '4.4.178-94.91.1',
+            '4.12.14-150.14.2' => '4.12.14-150.14.1',
         }};
 
     # remove all kernel related packages from system
     my @packages = remove_kernel_packages();
 
     my @lpackages = @packages;
+
+    push @packages, "kernel-devel" if is_sle('12+');
 
     # extend list of packages with $version + workaround exceptions
     foreach my $package (@packages) {
@@ -169,8 +211,9 @@ sub prepare_kgraft {
     while (my ($i, $val) = each(@repos)) {
         zypper_call("ar $val kgraft-test-repo-$i");
 
-        my $kversion = script_output(q(zypper -n se -s kernel-default));
-        my $pversion = script_output("zypper -n se -s -r kgraft-test-repo-$i");
+        my $kversion = zypper_search(q(-s -x kernel-default));
+        my $pversion = zypper_search("-s -t package -r kgraft-test-repo-$i");
+        $pversion = join(' ', map { $$_{name} } @$pversion);
 
         #disable kgraf-test-repo for while
         zypper_call("mr -d kgraft-test-repo-$i");
@@ -178,7 +221,12 @@ sub prepare_kgraft {
         my $wanted_version = right_kversion($kversion, $pversion);
         fully_patch_system;
         install_lock_kernel($wanted_version);
+
+        if (check_var('REMOVE_KGRAFT', '1')) {
+            zypper_call("rm " . $pversion);
+        }
     }
+
     power_action('reboot', textmode => 1);
 }
 
@@ -186,9 +234,12 @@ sub right_kversion {
     my ($kversion, $pversion) = @_;
     my ($kver_fragment) = $pversion =~ qr/(?:kgraft-|kernel-live)patch-(\d+_\d+_\d+-\d+_*\d*_*\d*)-default/;
     $kver_fragment =~ s/_/\\\./g;
-    my ($real_version) = $kversion =~ qr/($kver_fragment\.*\d*)/;
 
-    return $real_version;
+    for my $item (@$kversion) {
+        return $$item{version} if $$item{version} =~ qr/^$kver_fragment\./;
+    }
+
+    die "Kernel $kver_fragment not found in repositories.";
 }
 
 sub update_kgraft {
@@ -227,6 +278,9 @@ sub update_kgraft {
             zypper_call("in -l  kernel-livepatch-4_12_14-25_13-default", exitcode => [0, 102, 103], log => 'zypper.log', timeout => 2100);
         }
         elsif ($wk_ker == 2) {
+            zypper_call("in -l  kernel-livepatch-4_12_14-197_15-default", exitcode => [0, 102, 103], log => 'zypper.log', timeout => 2100);
+        }
+        elsif ($wk_ker == 3) {
             zypper_call("in -l kgraft-patch-3_12_74-60_64_104-xen kgraft-patch-3_12_74-60_64_104-default", exitcode => [0, 102, 103], log => 'zypper.log', timeout => 2100);
         }
         else {
@@ -247,8 +301,8 @@ sub install_kotd {
     my $repo = shift;
     fully_patch_system;
     remove_kernel_packages;
-    zypper_call("ar -G -f -p 90 $repo KOTD");
-    zypper_call("in -l kernel-default");
+    zypper_ar($repo, name => 'KOTD', priority => 90, no_gpg_check => 1);
+    zypper_call("in -l kernel-default kernel-devel");
 }
 
 sub boot_to_console {
@@ -274,32 +328,38 @@ sub run {
     }
 
     if (get_var('KGRAFT')) {
-        my $qa_head = get_required_var('QA_HEAD_REPO');
         prepare_kgraft($repo, $incident_id);
         boot_to_console($self);
 
-        # dependencies for heavy load script
-        if (!$wk_ker) {
-            zypper_call("ar $qa_head qa_repo");
-            zypper_call("--gpg-auto-import-keys ref");
-            zypper_call("in qa_lib_ctcs2 qa_test_ltp qa_test_newburn");
-        }
-        # update kgraft patch under heavy load
-        update_kgraft($repo, $incident_id);
+        if (!check_var('REMOVE_KGRAFT', '1')) {
+            # dependencies for heavy load script
+            if (!$wk_ker) {
+                add_qa_head_repo;
+                zypper_call("in qa_lib_ctcs2 qa_test_ltp qa_test_newburn");
+            }
 
-        if (!$wk_ker) {
-            zypper_call("rr qa_repo");
-            zypper_call("rm qa_lib_ctcs2 qa_test_ltp qa_test_newburn");
-        }
-        power_action('reboot', textmode => 1);
+            # update kgraft patch under heavy load
+            update_kgraft($repo, $incident_id);
 
-        boot_to_console($self);
+            if (!$wk_ker) {
+                zypper_call("rr qa-head");
+                zypper_call("rm qa_lib_ctcs2 qa_test_ltp qa_test_newburn");
+            }
+            power_action('reboot', textmode => 1);
+
+            boot_to_console($self);
+        }
 
         kgraft_state;
     }
     elsif (get_var('AZURE')) {
-        prepare_azure;
-        update_kernel($repo, $incident_id);
+        if (get_var('AZURE_FIRST_RELEASE')) {
+            first_azure_release($repo);
+        }
+        else {
+            prepare_azure;
+            update_kernel($repo, $incident_id);
+        }
     }
     elsif (get_var('KOTD_REPO')) {
         install_kotd($repo);
@@ -316,3 +376,34 @@ sub test_flags {
     return {fatal => 1};
 }
 1;
+
+=head1 Configuration
+
+=head2 INCIDENT_REPO
+
+Comma-separated repository URL list with packages to be tested. Used together
+with KGRAFT, AZURE or in the default case. Mutually exclusive with KOTD_REPO.
+INCIDENT_ID variable must be set to maintenance incident number.
+
+=head2 KGRAFT
+
+When KGRAFT variable evaluates to true, the incident is a kgraft/livepatch
+test. Install one of the older released kernels and apply kgraft/livepatch
+from incident repository to it.
+
+=head2 AZURE
+
+When AZURE variable evaluates to true, the incident is a public cloud kernel
+test. Uninstall kernel-default and install kernel-azure instead. Then update
+kernel as in the default case.
+
+=head3 AZURE_FIRST_RELEASE
+
+When AZURE_FIRST_RELEASE evaluates to true, install kernel-azure directly
+from incident repository and update system. This is a chicken&egg workaround
+because there is never any kernel-azure package in the pool repository.
+
+=head2 KOTD_REPO
+
+Repository URL for installing kernel of the day packages. Update system and
+install new kernel using the simplified installation method.

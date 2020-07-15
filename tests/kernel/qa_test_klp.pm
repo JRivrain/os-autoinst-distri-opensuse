@@ -12,6 +12,8 @@
 
 use strict;
 use warnings;
+use File::Basename 'basename';
+
 use base 'opensusebasetest';
 use testapi;
 use utils;
@@ -25,31 +27,27 @@ sub run {
         record_info("Azure don't have kGraft/LP infrastructure");
         return;
     }
+
+    if (script_run('[ -d /lib/modules/$(uname -r)/build ]') != 0) {
+        zypper_call('in -l kernel-devel');
+    }
+
     my $git_repo = get_required_var('QA_TEST_KLP_REPO');
-    my ($test_type) = $git_repo =~ /qa_test_(\w+).git/;
+    my $dir      = basename($git_repo);
+    $dir =~ s/\.git$//;
 
     (is_sle(">12-sp1") || !is_sle) ? $self->select_serial_terminal() : select_console('root-console');
-    zypper_call('ar -f -G ' . get_required_var('QA_HEAD_REPO') . ' qa_head');
-    zypper_call('in -l bats hiworkload', exitcode => [0, 106, 107]);
 
     add_suseconnect_product("sle-sdk") if (is_sle('<12-SP5'));
-
-    zypper_call('in -l git gcc kernel-devel make');
+    zypper_call('in -l autoconf automake gcc git make');
 
     assert_script_run('git clone ' . $git_repo);
-
-    assert_script_run("cd qa_test_$test_type;bats $test_type.bats", 2760);
+    assert_script_run("cd $dir && ./run.sh", 2760);
 }
 
 1;
 
 =head1 Example configuration
-
-=head2 QA_HEAD_REPO
-
-RPM repository for used for hiworkload.
-QA_HEAD_REPO=http://dist.nue.suse.com/ibs/QA:/Head/SLE-%VERSION%
-QA_HEAD_REPO=http://dist.nue.suse.com/ibs/QA:/Head/openSUSE_%VERSION%
 
 =head2 QA_TEST_KLP_REPO
 

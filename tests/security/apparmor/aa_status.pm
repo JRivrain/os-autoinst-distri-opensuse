@@ -13,9 +13,12 @@
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, see <http://www.gnu.org/licenses/>.
 #
-# Summary: Test the basic information output function for apparmor aa-status
-#          and whether AppArmor was enabled by default
-# Maintainer: Wes <whdu@suse.com>
+# Summary: Test the basic information output function for apparmor using
+# aa-status.
+# - Check if apparmor is active
+# - Run aa-status, check the output for strings about modules/profiles/processes
+# and strings enforced, complain, unconfined and loaded.
+# Maintainer: llzhao <llzhao@suse.com>
 # Tags: poo#36874, poo#44912
 
 use base "consoletest";
@@ -23,22 +26,12 @@ use strict;
 use warnings;
 use testapi;
 use utils;
+use services::apparmor;
 
 sub run {
     select_console 'root-console';
-
-    systemctl('is-active apparmor');
-
-    validate_script_output "aa-status", sub {
-        m/
-        module\ is\ loaded.*
-        profiles\ are\ loaded.*
-        profiles\ are\ in\ enforce\ mode.*
-        profiles\ are\ in\ complain\ mode.*
-        processes\ are\ in\ enforce\ mode.*
-        processes\ are\ in\ complain\ mode.*
-        processes\ are\ unconfined/sxx
-    };
+    services::apparmor::check_service();
+    services::apparmor::check_aa_status();
 }
 
 1;

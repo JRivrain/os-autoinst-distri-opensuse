@@ -8,6 +8,11 @@
 # without any warranty.
 
 # Summary: validate package and patterns in the SUT
+# - Create an structure containing some software names and patterns
+# - Using zypper, check if packages are installed, following rules defined in
+#   the structure
+# - Using zypper, check if patterns are installed, following rules defined in
+#   the structure
 # Maintainer: Zaoliang Luo <zluo@suse.com>
 
 use base "consoletest";
@@ -21,7 +26,7 @@ my %software = ();
 
 # Define test data
 
-$software{salt} = {
+$software{'salt-minion'} = {
     repo      => 'Basesystem',
     installed => is_jeos() ? 1 : 0,       # On JeOS Salt is present in the default image
     condition => sub { is_sle('15+') },
@@ -50,7 +55,7 @@ sub verify_installation_and_repo {
     my $available = !!(!defined($software{$name}->{available}) || $software{$name}->{available}->());
     # Negate condition if package should not be available
     my $cmd = $available ? '' : '! ';
-    $cmd .= "zypper se -n $args --match-exact --details $name";
+    $cmd .= "zypper --non-interactive se -n $args --match-exact --details $name";
     # Verify repo only if package expected to be available
     $cmd .= ' | grep ' . $software{$name}->{repo} if $available;
     # Record error in case non-zero return code
@@ -61,7 +66,7 @@ sub verify_installation_and_repo {
               . " Expected to be installed: @{ [ $software{$name}->{installed} ? 'true' : 'false' ] }\n";
         }
         else {
-            $error .= " '$name' found in @{ [ $software{$name}->{repo} ] } repo, expected to be not available\n";
+            $error .= " '$name' found in @{ [ $software{$name}->{repo} ] } repo, this package should not be present.\n";
         }
         return $error;
     }

@@ -12,8 +12,9 @@
 
 use base "sles4sap";
 use testapi;
-use version_utils 'is_sle';
-use Utils::Architectures 'is_ppc64le';
+use utils "zypper_call";
+use version_utils qw(is_sle is_upgrade);
+use Utils::Architectures;
 use strict;
 use warnings;
 
@@ -26,20 +27,12 @@ sub tuned_is {
 sub run {
     my ($self) = @_;
 
-    # Test has to work differently on x86_64 and ppc64le. Will verify test
-    # is running on ppc64le via the OFW variable
-    my $is_ppc64le = get_var('OFW');
+    my @solutions = qw(BOBJ HANA MAXDB NETWEAVER NETWEAVER\+HANA S4HANA-APP\+DB S4HANA-APPSERVER S4HANA-DBSERVER SAP-ASE);
 
-    # List of solutions is different between saptune in x86_64 and in ppc64le
-    my @solutions
-      = $is_ppc64le ?
-      qw(HANA MAXDB NETWEAVER S4HANA-APPSERVER S4HANA-DBSERVER)
-      : qw(BOBJ HANA MAXDB NETWEAVER S4HANA-APPSERVER S4HANA-DBSERVER SAP-ASE);
+    $self->select_serial_terminal;
 
-    # Skip test if SLES4SAP version is before 15 and running on ppc64le
-    return if (is_sle('<15') and $is_ppc64le);
-
-    select_console 'root-console';
+    # saptune is not installed by default on SLES4SAP 12 on ppc64le
+    zypper_call "-n in saptune" if (is_ppc64le() and is_sle('<15'));
 
     unless (tuned_is 'running') {
         assert_script_run "saptune daemon start";
@@ -56,12 +49,19 @@ sub run {
     die "Command 'saptune daemon start' didn't start tuned"
       unless (tuned_is 'running');
 
+    # Skip test if saptune version is 1 in case of upgrade only!
+    if (is_upgrade()) {
+        return if (script_output("rpm -q saptune") =~ m/saptune-1\./);
+        # saptune_v2 can run in v1 compat mode
+        return if (script_output("saptune version") =~ m/current active saptune version is '1'/);
+    }
+
     my $output = script_output "saptune solution list";
     my $regexp = join('.+', @solutions);
     die "Command 'saptune solution list' output is not recognized" unless ($output =~ m|$regexp|s);
 
     $output = script_output "saptune note list";
-    $regexp = 'All notes \(\+ denotes manually enabled notes, \* denotes notes enabled by solutions\):';
+    $regexp = 'All notes \(\+ denotes manually enabled notes, \* denotes notes enabled by solutions';
     die "Command 'saptune note list' output is not recognized" unless ($output =~ m|$regexp|);
 }
 

@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright © 2018-2019 SUSE LLC
+# Copyright © 2018-2020 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -15,6 +15,9 @@ use warnings;
 use base "x11test";
 use testapi;
 
+
+my $tutorial_disabled;
+
 sub upload_autoinst_log {
     assert_script_run 'openqa-client jobs/1/cancel post';
     for my $i (1 .. 10) {
@@ -22,35 +25,34 @@ sub upload_autoinst_log {
         last if (script_run('openqa-client jobs/1 | grep state | grep done', 40) == 0);
         sleep 5;
     }
-    assert_script_run 'wget http://localhost/tests/1/file/autoinst-log.txt';
-    upload_logs('autoinst-log.txt', log_name => "nested");
+    if (script_run('wget http://localhost/tests/1/file/autoinst-log.txt') != 0) {
+        record_info('Log download', 'Error downloading autoinst-log.txt from nested openQA webui. Consult journal for further information.', result => 'fail');
+        script_run 'find /var/lib/openqa/testresults/';
+    }
+    else {
+        upload_logs('autoinst-log.txt', log_name => "nested");
+    }
+}
+
+sub handle_notify_popup {
+    assert_screen 'openqa-dont-notify-me';
+    for my $i (1 .. 5) {
+        assert_and_click 'openqa-dont-notify-me';
+        if (check_screen('openqa-tutorial-confirm', 15)) {
+            last;
+        }
+    }
+    assert_and_click 'openqa-tutorial-confirm';
+    assert_screen 'openqa-tutorial-closed';
 }
 
 sub run {
-    # get rid of that horrible tutorial box
-    wait_still_screen;
-    assert_and_click 'openqa-dont-notify-me';
-    assert_and_click 'openqa-tutorial-confirm';
-    assert_screen 'openqa-tutorial-closed';
-    wait_still_screen;
-
-    # while job not finished
-    for (1 .. 5) {
-        send_key 'pgup';
-        assert_and_click 'openqa-tests';
-        wait_still_screen;
-        last if check_screen 'openqa-job-minimalx', 2;
-        send_key 'pgdn';
-        last if check_screen 'openqa-job-minimalx', 2;
-    }
-
+    handle_notify_popup;
+    assert_screen 'openqa-tests';
+    assert_and_click 'openqa-tests';
     assert_and_click 'openqa-job-minimalx';
-
-    # wait for result
-    if (!check_screen('openqa-testresult', 300)) {
-        send_key 'f5';
-    }
-    assert_screen 'openqa-testresult';
+    assert_and_click 'openqa-job-details';
+    assert_screen 'openqa-testresult', 600;
 }
 
 sub test_flags {

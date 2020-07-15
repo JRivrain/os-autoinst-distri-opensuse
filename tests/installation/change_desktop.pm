@@ -12,11 +12,12 @@ package change_desktop;
 # Summary: [OOP]Change desktop
 # Maintainer: Jozef Pupava <jpupava@suse.com>
 
-use base "y2logsstep";
-use base "installsummarystep";
+use y2_logs_helper qw(workaround_dependency_issues workaround_dependency_issues break_dependency);
+use base qw(y2_installbase installsummarystep);
 use strict;
 use warnings;
 use testapi;
+use version_utils 'is_sle';
 
 sub change_desktop {
     my ($self) = @_;
@@ -31,10 +32,10 @@ sub change_desktop {
         wait_screen_change { send_key 'ret'; };
     }
 
-    if (check_screen('dependency-issue', 5) && get_var("WORKAROUND_DEPS")) {
+    if (check_screen('dependency-issue', 5) && check_var("WORKAROUND_DEPS", '1')) {
         $self->workaround_dependency_issues;
     }
-    if (check_screen('dependency-issue', 0) && get_var("BREAK_DEPS")) {
+    if (check_screen('dependency-issue', 0) && check_var("BREAK_DEPS", '1')) {
         $self->break_dependency;
     }
 
@@ -47,6 +48,24 @@ sub change_desktop {
         send_key 'ret';
     }
     send_key_until_needlematch 'patterns-list-selected', 'tab', 10, 2;
+
+    if (is_sle('<=12-SP1') && get_var("REGRESSION", '') =~ /xen|kvm|qemu/) {
+        assert_and_click 'gnome_logo';
+        send_key 'spc';
+
+        assert_and_click 'xorg_logo';
+        send_key 'spc';
+
+        if (get_var("REGRESSION", '') =~ /kvm|qemu/) {
+            assert_and_click 'kvm_logo';
+            send_key 'spc';
+        } elsif (check_var("REGRESSION", "xen")) {
+            assert_and_click 'xen_logo';
+            send_key 'spc';
+        }
+
+        assert_and_click 'apparmor_logo';
+    }
 
     if (get_var('SYSTEM_ROLE') && !check_var('SYSTEM_ROLE', 'default')) {
         assert_screen "desktop-unselected";

@@ -16,10 +16,20 @@ use warnings;
 use testapi;
 use lockapi;
 use hacluster;
+use utils 'zypper_call';
 
 sub run {
     my $cluster_name = get_cluster_name;
     my $node_to_join = get_node_to_join;
+
+    # Qdevice configuration
+    if (get_var('QDEVICE')) {
+        zypper_call 'in corosync-qdevice';
+        barrier_wait("QNETD_SERVER_READY_$cluster_name");
+    }
+
+    # Ensure that ntp service is activated/started
+    activate_ntp;
 
     # Wait until cluster is initialized
     diag 'Wait until cluster is initialized...';
@@ -27,11 +37,11 @@ sub run {
 
     # Try to join the HA cluster through first node
     assert_script_run "ping -c1 $node_to_join";
-    type_string "ha-cluster-join -yc $node_to_join\n";
-    assert_screen 'ha-cluster-join-password';
+    type_string "ha-cluster-join -yc $node_to_join ; echo ha-cluster-join-finished-\$? > /dev/$serialdev\n";
+    assert_screen 'ha-cluster-join-password', $join_timeout;
     type_password;
     send_key 'ret';
-    wait_still_screen(stilltime => 10);
+    wait_serial("ha-cluster-join-finished-0", $join_timeout);
 
     # Indicate that the other nodes have joined the cluster
     barrier_wait("NODE_JOINED_$cluster_name");

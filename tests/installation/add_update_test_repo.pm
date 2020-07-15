@@ -1,6 +1,6 @@
 # SUSE's openQA tests
 #
-# Copyright © 2016 SUSE LLC
+# Copyright © 2016-2020 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -12,7 +12,7 @@
 
 use strict;
 use warnings;
-use base "y2logsstep";
+use base 'y2_installbase';
 use testapi;
 use qam 'advance_installer_window';
 
@@ -31,19 +31,16 @@ sub run() {
     while (defined(my $maintrepo = shift @repos)) {
         next if $maintrepo =~ /^\s*$/;
         assert_screen('addon-menu-active', 60);
-        wait_screen_change { send_key 'alt-u' };    # specify url
-        if (check_var('VERSION', '12') and check_var('VIDEOMODE', 'text')) {
-            send_key 'alt-x';
-        }
-        else {
-            send_key $cmd{next};
-        }
+        send_key 'alt-u';    # specify url
+        wait_still_screen(1);
+        send_key $cmd{next};
+        wait_still_screen(1);
         assert_screen 'addonurl-entry';
-        send_key 'alt-u';                           # select URL field
+        send_key 'alt-u';    # select URL field
         type_string $maintrepo;
         advance_installer_window('addon-products');
         # if more repos to come, add more
-        send_key_until_needlematch('addon-menu-active', 'alt-a', 10, 5) if @repos;
+        send_key_until_needlematch('addon-menu-active', 'alt-a', 10, 2) if @repos;
     }
 }
 

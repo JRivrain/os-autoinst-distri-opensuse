@@ -62,10 +62,7 @@ sub run {
     die "The current snapshot is not ahead of the logged one" unless $current_id > $logged_id;
 
     # Automated rollback shows grub menu twice (timeout disabled)
-    type_string "reboot\n";
-    assert_screen 'grub2', 100;
-    wait_screen_change { send_key 'ret' };
-    process_reboot;
+    process_reboot(automated_rollback => 1);
 
     my $final_id = get_btrfsid;
     die "health-checker does not rollback to the correct snapshot" unless $initial_id == $final_id;
@@ -77,7 +74,7 @@ sub run {
 }
 
 sub post_fail_hook {
-    script_run "journalctl -u health-checker > health-checker.log", 60;
+    script_run "journalctl -u health-checker -o short-precise > health-checker.log", 60;
     upload_logs "health-checker.log";
 
     # revert changes to rebootmgr.sh and reboot

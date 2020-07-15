@@ -14,53 +14,46 @@ use 5.018;
 use warnings;
 use base 'opensusebasetest';
 use testapi;
-use bootloader_setup 'boot_grub_item';
-use Utils::Backends 'use_ssh_serial_console';
+use LTP::WhiteList 'download_whitelist';
+use LTP::utils;
+use version_utils 'is_jeos';
 
 sub run {
     my ($self, $tinfo) = @_;
-    my $ltp_env    = get_var('LTP_ENV');
     my $cmd_file   = get_var('LTP_COMMAND_FILE') || '';
     my $is_network = $cmd_file =~ m/^\s*(net|net_stress)\./;
     my $is_ima     = $cmd_file =~ m/^ima$/i;
 
-    if ($is_ima) {
-        # boot kernel with IMA parameters
-        boot_grub_item();
-    }
-    else {
-        # during install_ltp, the second boot may take longer than usual
-        $self->wait_boot(ready_time => 500);
-    }
-
     if (check_var('BACKEND', 'ipmi')) {
-        use_ssh_serial_console;
+        record_info('INFO', 'IPMI boot');
+        select_console 'sol', await_console => 0;
+        assert_screen('linux-login', 1800);
+    }
+    elsif (is_jeos) {
+        record_info('Loaded JeOS image', 'nothing to do...');
     }
     else {
-        $self->select_serial_terminal;
+        record_info('INFO', 'normal boot or boot with params');
+        # during install_ltp, the second boot may take longer than usual
+        $self->wait_boot(ready_time => 1800);
     }
 
-    assert_script_run('export LTPROOT=/opt/ltp; export LTP_COLORIZE_OUTPUT=n TMPDIR=/tmp PATH=$LTPROOT/testcases/bin:$PATH');
+    $self->select_serial_terminal;
 
-    # setup for LTP networking tests
-    assert_script_run("export PASSWD='$testapi::password'");
-
-    my $block_dev = get_var('LTP_BIG_DEV');
-    if ($block_dev && get_var('NUMDISKS') > 1) {
-        assert_script_run("lsblk -la; export LTP_BIG_DEV=$block_dev");
-    }
+    download_whitelist if get_var('LTP_KNOWN_ISSUES');
 
     # check kGraft patch if KGRAFT=1
-    if (check_var('KGRAFT', '1')) {
+    if (check_var('KGRAFT', '1') && !check_var('REMOVE_KGRAFT', '1')) {
         assert_script_run("uname -v| grep -E '(/kGraft-|/lp-)'");
     }
 
-    if ($ltp_env) {
-        $ltp_env =~ s/,/ /g;
-        script_run("export $ltp_env");
-    }
+    prepare_ltp_env();
     script_run('env');
     upload_logs('/boot/config-$(uname -r)', failok => 1);
+
+    my $kernel_pkg_log = '/tmp/kernel-pkg.txt';
+    script_run('rpm -qi ' . ((is_jeos) ? 'kernel-default-base' : 'kernel-default') . " > $kernel_pkg_log 2>&1");
+    upload_logs($kernel_pkg_log, failok => 1);
 
     my $ver_linux_log = '/tmp/ver_linux_before.txt';
     script_run("\$LTPROOT/ver_linux > $ver_linux_log 2>&1");
@@ -71,7 +64,9 @@ sub run {
         my $environment = {
             product     => get_var('DISTRI') . ':' . get_var('VERSION'),
             revision    => get_var('BUILD'),
+            flavor      => get_var('FLAVOR'),
             arch        => get_var('ARCH'),
+            backend     => get_var('BACKEND'),
             kernel      => '',
             libc        => '',
             gcc         => '',
@@ -96,32 +91,6 @@ sub run {
     script_run('aa-enabled; aa-status');
 
     if ($is_network) {
-        # poo#18762: Sometimes there is physical NIC which is not configured.
-        # One of the reasons can be renaming by udev rule in
-        # /etc/udev/rules.d/70-persistent-net.rules. This breaks some tests
-        # (even net namespace based ones).
-        # Workaround: configure physical NIS (if needed).
-        my $conf_nic_script = << 'EOF';
-dir=/sys/class/net
-ifaces="`basename -a $dir/* | grep -v -e ^lo -e ^tun -e ^virbr -e ^vnet`"
-for iface in $ifaces; do
-    config=/etc/sysconfig/network/ifcfg-$iface
-    if [ "`cat $dir/$iface/operstate`" = "down" ] && [ ! -e $config ]; then
-        echo "WARNING: create config '$config'"
-        printf "BOOTPROTO='dhcp'\nSTARTMODE='auto'\nDHCLIENT_SET_DEFAULT_ROUTE='yes'\n" > $config
-        systemctl restart network
-        sleep 1
-    fi
-done
-EOF
-        script_output($conf_nic_script);
-
-        # dhclient requires no wicked service not only running but also disabled
-        script_run(
-            'systemctl --no-pager -p Id show network.service | grep -q Id=wicked.service &&
-{ export ENABLE_WICKED=1; systemctl disable wicked; }'
-        );
-
         # emulate $LTPROOT/testscripts/network.sh
         assert_script_run('curl ' . data_url("ltp/net.sh") . ' -o net.sh', 60);
         assert_script_run('chmod 755 net.sh');
@@ -162,7 +131,7 @@ EOF
         script_run('netstat -nap');
 
         script_run('cat /etc/resolv.conf');
-        script_run('cat /etc/nsswitch.conf');
+        script_run('f=/etc/nsswitch.conf; [ ! -f $f ] && f=/usr$f; cat $f');
         script_run('cat /etc/hosts');
 
         # hostname (getaddrinfo_01)
@@ -180,7 +149,10 @@ EOF
         script_run('ping6 -c 2 $IPV6_RNETWORK:$RHOST_IPV6_HOST');
     }
 
-    assert_script_run('cd $LTPROOT/testcases/bin');
+    # Check and activate hugepages before test execution
+    script_run 'grep -e Huge -e PageTables /proc/meminfo';
+    script_run 'echo 1 > /proc/sys/vm/nr_hugepages';
+    script_run 'grep -e Huge -e PageTables /proc/meminfo';
 }
 
 sub test_flags {

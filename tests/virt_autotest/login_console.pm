@@ -11,7 +11,7 @@
 # Maintainer: alice <xlai@suse.com>
 
 package login_console;
-use base "y2logsstep";
+use base 'y2_installbase';
 use strict;
 use warnings;
 use File::Basename;
@@ -36,13 +36,14 @@ sub ipmitool {
 }
 
 sub login_to_console {
-    my ($self, $timeout) = @_;
-    $timeout //= 240;
+    my ($self, $timeout, $counter) = @_;
+    $timeout //= 5;
+    $counter //= 240;
 
-    if (check_var('PERF_KERNEL', '1')) {
+    if (check_var('PERF_KERNEL', '1') or check_var('CPU_BUGS', '1') or check_var('VT_PERF', '1')) {
         reset_consoles;
         select_console 'sol', await_console => 0;
-        send_key_until_needlematch(['linux-login', 'virttest-displaymanager'], 'ret', $timeout, 5);
+        send_key_until_needlematch(['linux-login', 'virttest-displaymanager'], 'ret', $counter, $timeout);
         #use console based on ssh to avoid unstable ipmi
         save_screenshot;
         use_ssh_serial_console;
@@ -64,14 +65,16 @@ sub login_to_console {
 
     if (!check_screen([qw(grub2 grub1 prague-pxe-menu)], 210)) {
         ipmitool("chassis power reset");
-        assert_screen([qw(grub2 grub1 prague-pxe-menu)], 90);
+        reset_consoles;
+        select_console 'sol', await_console => 0;
+        check_screen([qw(grub2 grub1 prague-pxe-menu)], 90);
     }
 
     # If a PXE menu will appear just select the default option (and save us the time)
     if (match_has_tag('prague-pxe-menu')) {
         send_key 'ret';
 
-        assert_screen([qw(grub2 grub1)], 60);
+        check_screen([qw(grub2 grub1)], 60);
     }
 
     if (!get_var("reboot_for_upgrade_step")) {
@@ -79,7 +82,15 @@ sub login_to_console {
             #send key 'up' to stop grub timer counting down, to be more robust to select xen
             send_key 'up';
             save_screenshot;
-            send_key_until_needlematch("virttest-bootmenu-xen-kernel", 'down', 10, 5);
+
+            for (1 .. 20) {
+                if ($_ == 10) {
+                    reset_consoles;
+                    select_console 'sol', await_console => 0;
+                }
+                send_key 'down';
+                last if check_screen 'virttest-bootmenu-xen-kernel', 5;
+            }
         }
     }
     else {
@@ -108,13 +119,17 @@ sub login_to_console {
             #grub may not showup after upgrade because default GRUB_TERMINAL setting
             #when fixed in separate PR, will uncomment following line
             #assert_screen([qw(grub2 grub1)], 120);
-
+            my $upgrade_machine = get_var('SUT_IP', 'nosutip');
+            if (is_remote_backend && check_var('ARCH', 'aarch64') && ($upgrade_machine =~ /huawei/img)) {
+                wait_still_screen 10;
+                boot_local_disk_arm_huawei;
+            }
             my $host_installed_version = get_var('VERSION_TO_INSTALL', get_var('VERSION', ''));
             ($host_installed_version) = $host_installed_version =~ /^(\d+)/im;
-            my $host_upgrade_version = get_required_var('UPGRADE_PRODUCT');         #format sles-15-sp0
-            my $host_upgrade_relver  = $host_upgrade_version =~ /sles-(\d+)-sp/i;
-            my $host_upgrade_spver   = $host_upgrade_version =~ /sp(\d+)$/im;
-            if (($host_installed_version eq '11') && ($host_upgrade_relver eq '15') && ($host_upgrade_spver eq '0')) {
+            my $host_upgrade_version = get_required_var('UPGRADE_PRODUCT');    #format sles-15-sp0
+            my ($host_upgrade_relver) = $host_upgrade_version =~ /sles-(\d+)-sp/i;
+            my ($host_upgrade_spver)  = $host_upgrade_version =~ /sp(\d+)$/im;
+            if (($host_installed_version eq '11') && (($host_upgrade_relver eq '15' && $host_upgrade_spver eq '0') || ($host_upgrade_relver eq '12' && $host_upgrade_spver eq '5'))) {
                 assert_screen('sshd-server-started-config', 180);
                 use_ssh_serial_console;
                 save_screenshot;

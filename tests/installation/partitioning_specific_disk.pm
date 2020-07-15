@@ -11,9 +11,9 @@
 # Summary:  Install build on specified parition and format this partition
 # Maintainer: Joyce Na <jna@suse.de>
 
+use base 'y2_installbase';
 use strict;
 use warnings;
-use base "y2logsstep";
 use version_utils qw(is_storage_ng is_sle);
 use partition_setup 'mount_device';
 use testapi;
@@ -82,6 +82,9 @@ sub run {
     send_key(is_storage_ng() ? 'alt-n' : 'alt-f');
     assert_screen 'expert-partitioner-finish';
     send_key 'alt-a';
+    if (check_screen("expert-partitioner-Warning_popup", 5)) {
+        send_key 'alt-y';
+    }
 }
 
 1;

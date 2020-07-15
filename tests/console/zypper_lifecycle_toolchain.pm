@@ -1,4 +1,4 @@
-# Copyright (C) 2017 SUSE LLC
+# Copyright (C) 2017-2020 SUSE LLC
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -25,22 +25,27 @@ use utils 'zypper_call';
 
 sub run {
     my %expiration = (
-        gcc5      => 'Now',
-        libada5   => 'Now',
-        gcc6      => 'Now',
-        gcc7      => '2019-04-30',
-        libada7   => '2019-04-30',
-        toolchain => '2024-10-31',
+        gcc6                              => 'Now',
+        gcc7                              => 'Now',
+        libada7                           => 'Now',
+        libada9                           => '2024-10-31',
+        cpp9                              => '2024-10-31',
+        'sle-module-toolchain-release-cd' => '2024-10-31',
+    );
+
+    my %timezone_workaround = (
+        '2024-10-31' => '2024-10-30',
     );
 
     select_console 'root-console';
     # Get gcc packages, ignore conflicting gcc6-ada and libada6 and cross-nvptx-newlib7 packages
+    # Ignore gcc8 due to bsc#1141474 (missing gcc8 dependencies)
     my $gcc_packages
-      = script_output "zypper -q se -ur SLE-Module-Toolchain12-Updates -t package | awk -F '|' '{print \$2}' | tail -n +3 | grep -vE '(gcc6-ada|libada6|cross-nvptx-newlib7)'", 300;
+      = script_output "zypper -q se -ur SLE-Module-Toolchain12-Updates -t package | awk -F '|' '{print \$2}' | tail -n +3 | grep -vE '(gcc6-ada|libada6|cross-nvptx-newlib7|gcc8)'", 300;
     # Create list by removing blank symbols and new lines
     $gcc_packages =~ s/(\R|\s)+/ /g;
     # Install gcc packages
-    zypper_call("in $gcc_packages", timeout => 1200);
+    zypper_call("in $gcc_packages", timeout => 1500);
     # Get lifecycle information for installed toolchain packages
     my $output = script_output "zypper lifecycle $gcc_packages", 300;
     diag($output);
@@ -48,7 +53,14 @@ sub run {
     for my $package (split(/ /, $gcc_packages)) {
         while (my ($package_regexp, $expected_date) = each %expiration) {
             if ($package =~ m/.*$package_regexp.*/ && $output !~ m/.*\Q$package\E\s*$expected_date.*/) {
-                die("For toolchain module $package expected $expected_date as expiration date, lifecycle output:\n $output");
+                my $error_msg         = "For toolchain module $package expected $expected_date as expiration date, lifecycle output:\n $output";
+                my $new_expected_date = (exists($timezone_workaround{$expected_date})) ? $timezone_workaround{$expected_date} : undef;
+                if (defined $new_expected_date && $package =~ m/.*$package_regexp.*/ && $output =~ m/.*\Q$package\E\s*$new_expected_date.*/) {
+                    record_soft_failure "bsc#1143453 - zypper lifecycle shows expiration date in wrong timezone - using workaround checking for $new_expected_date:\n$error_msg";
+                }
+                else {
+                    die($error_msg);
+                }
             }
         }
     }

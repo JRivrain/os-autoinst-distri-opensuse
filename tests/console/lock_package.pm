@@ -8,13 +8,14 @@
 # without any warranty.
 
 # Summary: lock package test mainly used for migration testsuite - poo#17206
-# Maintainer: Wei Jiang <wjiang@suse.com>
+# Maintainer: Lemon <leli@suse.com>
 
 package lock_package;
 use base "consoletest";
 use strict;
 use warnings;
 use testapi;
+use utils;
 
 our $locked_pkg_info = [];
 
@@ -29,7 +30,7 @@ sub run {
         push @$locked_pkg_info, {name => $pkg, fullname => $fullname};
 
         # Add a lock for each package
-        assert_script_run "zypper al $pkg";
+        zypper_call "al $pkg";
     }
 }
 

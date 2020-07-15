@@ -20,9 +20,19 @@ use strict;
 use warnings FATAL => 'all';
 use parent 'Distribution::Opensuse::Tumbleweed';
 use Installation::Partitioner::Libstorage::EditProposalSettingsController;
+use Installation::Partitioner::Libstorage::ExpertPartitionerController;
+use YaST::NetworkSettings::v3::NetworkSettingsController;
 
 sub get_partitioner {
     return Installation::Partitioner::Libstorage::EditProposalSettingsController->new();
+}
+
+sub get_expert_partitioner {
+    return Installation::Partitioner::Libstorage::ExpertPartitionerController->new();
+}
+
+sub get_network_settings {
+    return YaST::NetworkSettings::v3::NetworkSettingsController->new();
 }
 
 1;

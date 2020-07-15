@@ -15,7 +15,7 @@
 #
 # Summary: Test audit function for IMA appraisal
 # Note: This case should come after 'ima_appraisal_digital_signatures'
-# Maintainer: wnereiz <wnereiz@member.fsf.org>
+# Maintainer: llzhao <llzhao@suse.com>
 # Tags: poo#49568
 
 use base "opensusebasetest";
@@ -52,7 +52,7 @@ sub run {
     validate_script_output "ausearch -m INTEGRITY_DATA", sub { m/\Q$sample_app\E/ };
 
     # Test both default(no ima_apprais=) and ima_appraise=log situation
-    add_grub_cmdline_settings("ima_appraise=log", 1);
+    add_grub_cmdline_settings("ima_appraise=log", update_grub => 1);
     power_action('reboot', textmode => 1);
     $self->wait_boot(textmode => 1);
     $self->select_serial_terminal;

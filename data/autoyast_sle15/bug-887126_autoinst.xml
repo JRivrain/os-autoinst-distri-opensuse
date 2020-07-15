@@ -164,7 +164,7 @@
     </general>
   </kdump>
   <keyboard>
-    <keymap>en</keymap>
+    <keymap>english-us</keymap>
   </keyboard>
   <language>
     <language>en_US</language>
@@ -205,7 +205,7 @@
       </interface>
     </interfaces>
     <ipv6 config:type="boolean">true</ipv6>
-    <keep_install_network config:type="boolean">false</keep_install_network>
+    <keep_install_network config:type="boolean">true</keep_install_network>
     <managed config:type="boolean">false</managed>
     <routing>
       <ipv4_forward config:type="boolean">false</ipv4_forward>
@@ -446,8 +446,9 @@
       <package>ucode-intel</package>
       <package>xf86-input-evdev</package>
       <package>xf86-input-wacom</package>
+      <package>yast2-nis-client</package>
+      <package>yast2-printer</package>
       <package>yast2-snapper</package>
-      <package>yast2-trans-en_US</package>
       <package>yast2-x11</package>
     </packages>
     <patterns config:type="list">

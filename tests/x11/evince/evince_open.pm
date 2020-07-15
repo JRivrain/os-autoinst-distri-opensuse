@@ -9,7 +9,10 @@
 # without any warranty.
 
 # Summary: Evince: Open PDF
-# Maintainer: mitiao <mitiao@gmail.com>
+# - Launch evince and open test.pdf from datadir
+# - Send ALT-F10 (maximize) and check
+# - Close evince
+# Maintainer: Huajian Luo <hluo@suse.com>
 # Tags: tc#1436023
 
 use base "x11test";
@@ -24,6 +27,11 @@ sub run {
     send_key "alt-f10";    # maximize window
     assert_screen 'evince-open-pdf', 5;
     send_key "ctrl-w";     # close evince
+}
+
+# add milestone flag to open in maximized window mode by default
+sub test_flags {
+    return {milestone => 1};
 }
 
 1;

@@ -10,17 +10,17 @@
 # Summary: Verify installation starts and is in progress
 # Maintainer: Michael Moese <mmoese@suse.de>
 
+use base 'y2_installbase';
 use strict;
 use warnings;
 
 use testapi;
 use bmwqemu;
-use base "y2logsstep";
 
 use HTTP::Tiny;
 use IPC::Run;
 use Socket;
-use Time::HiRes qw(sleep);
+use Time::HiRes 'sleep';
 
 sub ipmitool {
     my ($cmd) = @_;
@@ -59,17 +59,42 @@ sub poweron_host {
     }
 }
 
+sub set_pxe_boot {
+    while (1) {
+        my $stdout = ipmitool('chassis bootparam get 5');
+        last if $stdout =~ m/Force PXE/;
+        diag "setting boot device to pxe";
+        ipmitool("chassis bootdev pxe");
+        sleep(3);
+    }
+}
+
 sub set_bootscript {
     my $host        = get_required_var('SUT_IP');
     my $ip          = inet_ntoa(inet_aton($host));
     my $http_server = get_required_var('IPXE_HTTPSERVER');
-    my $url         = "$http_server/$ip/script.ipxe";
+    my $url         = "$http_server/v1/bootscript/script.ipxe/$ip";
+    my $arch        = get_required_var('ARCH');
+    my $autoyast    = get_required_var('AUTOYAST');
 
-    my $autoyast = get_required_var('AUTOYAST');
+    my $kernel = get_required_var('MIRROR_HTTP');
+    my $initrd = get_required_var('MIRROR_HTTP');
 
-    my $kernel  = get_required_var('MIRROR_HTTP') . '/boot/x86_64/loader/linux';
-    my $initrd  = get_required_var('MIRROR_HTTP') . '/boot/x86_64/loader/initrd';
+    if ($arch eq "aarch64") {
+        $kernel .= "/boot/$arch/linux";
+        $initrd .= "/boot/$arch/initrd";
+    } else {
+        $kernel .= "/boot/$arch/loader/linux";
+        $initrd .= "/boot/$arch/loader/initrd";
+    }
     my $install = get_required_var('MIRROR_NFS');
+    my $cmdline_extra;
+
+    my $console = get_var('IPXE_CONSOLE');
+
+    $cmdline_extra = "console=$console" if $console;
+
+    $cmdline_extra .= "root=/dev/ram0 initrd=initrd textmode=1" if check_var('IPXE_UEFI', '1');
 
     my $bootscript = <<"END_BOOTSCRIPT";
 #!ipxe
@@ -78,7 +103,7 @@ echo ++++++++++++ openQA ipxe boot ++++++++++++
 echo +    Host: $host
 echo ++++++++++++++++++++++++++++++++++++++++++
 
-kernel $kernel install=$install autoyast=$autoyast console=tty0 console=ttyS1,115200
+kernel $kernel install=$install autoyast=$autoyast $cmdline_extra
 initrd $initrd
 boot
 END_BOOTSCRIPT
@@ -88,6 +113,20 @@ END_BOOTSCRIPT
     diag "$response->{status} $response->{reason}\n";
 }
 
+sub set_bootscript_hdd {
+    my $host        = get_required_var('SUT_IP');
+    my $ip          = inet_ntoa(inet_aton($host));
+    my $http_server = get_required_var('IPXE_HTTPSERVER');
+    my $url         = "$http_server/v1/bootscript/script.ipxe/$ip";
+
+    my $bootscript = <<"END_BOOTSCRIPT";
+#!ipxe
+exit
+END_BOOTSCRIPT
+
+    my $response = HTTP::Tiny->new->request('POST', $url, {content => $bootscript, headers => {'content-type' => 'text/plain'}});
+    diag "$response->{status} $response->{reason}\n";
+}
 
 sub run {
     my $self = shift;
@@ -96,7 +135,7 @@ sub run {
 
     set_bootscript;
 
-    ipmitool('chassis bootdev pxe');
+    set_pxe_boot;
     poweron_host;
 
     select_console 'sol', await_console => 0;
@@ -104,7 +143,12 @@ sub run {
     # make sure to wait for a while befor changing the boot device again, in order to not change it too early
     sleep 120;
 
-    ipmitool('chassis bootdev disk');
+    if (check_var('IPXE_UEFI', '1')) {
+        # some machines need really long to boot into the installer, make sure
+        # we wait long enough so the bootscript was loaded
+        sleep 600;
+        set_bootscript_hdd;
+    }
     assert_screen('linux-login', 1800);
 }
 

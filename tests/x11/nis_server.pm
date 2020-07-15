@@ -15,13 +15,14 @@ use base "x11test";
 use strict;
 use warnings;
 use testapi;
-use lockapi 'mutex_create';
-use mmapi 'wait_for_children';
-use utils 'systemctl';
-use y2x11test qw(setup_static_mm_network %setup_nis_nfs_x11);
-use version_utils 'is_sle';
+use lockapi;
+use mmapi;
+use utils;
+use mm_network 'setup_static_mm_network';
+use y2_module_guitest '%setup_nis_nfs_x11';
 use x11utils 'turn_off_gnome_screensaver';
-use y2logsstep 'yast2_console_exec';
+use y2_module_consoletest;
+use scheduler 'get_test_suite_data';
 
 sub setup_verification {
     script_run 'rpcinfo -u localhost ypserv';    # ypserv is running
@@ -34,6 +35,7 @@ sub setup_verification {
 }
 
 sub nis_server_configuration {
+    my $test_data = get_test_suite_data();
     # NIS Server Setup
     assert_screen 'nis-server-setup-status', 150;
     send_key 'alt-m';                            # NIS master server
@@ -44,8 +46,6 @@ sub nis_server_configuration {
     send_key 'tab';                              # jump to NIS domain name
     type_string $setup_nis_nfs_x11{nis_domain};
     assert_screen 'nis-server-master-server-setup-nis-domain';
-    send_key 'alt-f';                            # open firewall port
-    assert_screen 'nis-master-server-tab-opened-fw';
     wait_screen_change { send_key 'alt-a' };
     # unselect active slave NIS server exists checkbox
     assert_screen 'nis-master-server-setup-finished';
@@ -58,7 +58,7 @@ sub nis_server_configuration {
     assert_screen 'nis-server-server-maps-setup';
     send_key 'tab';                              # jump to map list
     my $c = 1;                                   # select all maps
-    while ($c <= 11) {
+    while ($c <= $test_data->{maps}) {
         send_key 'spc';
         send_key 'down';
         $c++;
@@ -81,9 +81,7 @@ sub nis_server_configuration {
 sub nfs_server_configuration {
     # NFS Server Configuration
     assert_screen 'nfs-server-configuration';
-    send_key 'alt-f';                            # open port in firewall
-    assert_screen 'nfs-server-configuration-opened-fw';
-    wait_screen_change { send_key 'alt-s' };     # start nfs server
+    send_key 'alt-s';                            # start nfs server
     send_key 'alt-m';                            # NFSv4 domain name field
     type_string $setup_nis_nfs_x11{nfs_domain};
     assert_screen 'nfs-server-configuration-nfsv4-domain';
@@ -118,35 +116,27 @@ sub run {
     turn_off_gnome_screensaver if check_var('DESKTOP', 'gnome');
     become_root;
     setup_static_mm_network($setup_nis_nfs_x11{server_address});
-    assert_script_run 'zypper -n in yast2-nis-server yast2-nfs-server';
-    # Workarounds:
-    # Yast2 does not open ports for SuseFirewall2 (bsc#999873)
-    # Missing firewalld service files for NFS/NIS -> lack of support for RPC (bsc#1083486)
-    if ($self->firewall eq 'firewalld') {
-        record_soft_failure('bsc#1083486');
-        my $firewalld_ypserv_service = get_test_data('x11/workaround_ypserv.xml');
-        type_string("echo \"$firewalld_ypserv_service\" > /usr/lib/firewalld/services/ypserv.xml\n");
-        my $firewalld_nfs_service = get_test_data('x11/workaround_nfs-kernel-server.xml');
-        type_string("echo \"$firewalld_nfs_service\" > /usr/lib/firewalld/services/nfs-kernel-server.xml\n");
-        assert_script_run('firewall-cmd --reload', fail_message => "Firewalld reload failed!");
-    }
-    if (is_sle) {
-        systemctl 'stop ' . $self->firewall;
-        record_soft_failure('bsc#999873');
-    }
-    my $module_name = y2logsstep::yast2_console_exec(yast2_module => 'nis_server');
+    zypper_call 'in yast2-nis-server yast2-nfs-server';
+
+    # we have to stop the firewall, see bsc#999873 and bsc#1083487#c36
+    systemctl 'stop ' . $self->firewall;
+
+    my $module_name = y2_module_consoletest::yast2_console_exec(yast2_module => 'nis_server');
     nis_server_configuration();
     wait_serial("$module_name-0", 360) || die "'yast2 nis server' didn't finish";
     assert_screen 'yast2_closed_xterm_visible';
-    # NIS Server is configured and running, configuration continues on client side
-    mutex_create('nis_ready');
-    $module_name = y2logsstep::yast2_console_exec(yast2_module => 'nfs_server');
+    $module_name = y2_module_consoletest::yast2_console_exec(yast2_module => 'nfs_server');
     nfs_server_configuration();
     wait_serial("$module_name-0", 360) || die "'yast2 nfs server' didn't finish";
     assert_screen 'yast2_closed_xterm_visible', 200;
-    # NFS Server is configured and running, configuration continues on client side
-    mutex_create('nfs_ready');
-    wait_for_children;
+    # In order for the hostname to get the set value via yast2 nis_server, a restart is needed. Otherwise "make"
+    # command won't work as in Makefile, there is a variable that gets it's value from "domainname" command
+    systemctl 'restart network';
+    # NIS and NFS Server is configured and running, configuration continues on client side
+    mutex_create('nis_nfs_server_ready');
+    my $children = get_children();
+    my $child_id = (keys %$children)[0];
+    mutex_wait('nis_nfs_client_ready', $child_id);
     # Read content of a file created by the client
     setup_verification();
     type_string "killall xterm\n";    # game over -> xterm

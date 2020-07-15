@@ -134,7 +134,6 @@
         <bootproto>dhcp</bootproto>
         <device>eth0</device>
         <dhclient_set_default_route>yes</dhclient_set_default_route>
-        <name>Ethernet Card 0</name>
         <startmode>auto</startmode>
       </interface>
       <interface>
@@ -271,6 +270,9 @@
       <pattern>minimal_base</pattern>
       <pattern>x11</pattern>
     </patterns>
+    <packages config:type="list">
+      <package>yast2-kdump</package>
+    </packages>
     <image/>
     <instsource/>
     <products config:type="list">

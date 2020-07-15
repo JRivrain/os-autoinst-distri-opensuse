@@ -15,12 +15,16 @@
 
 # Summary: Main purpose not allow support server to go down
 # until all parallel jobs finish what they are doing
+# - Wait for children jobs to finish
+# - If REMOTE_CONTROLLER is undefined, send "ctrl-c"
+# - Upload logs, if opensuse
 # Maintainer: Pavel Sladek <psladek@suse.com>
 
 use strict;
 use warnings;
 use base 'basetest';
 use testapi;
+use lockapi;
 use mmapi;
 
 sub run {
@@ -28,8 +32,11 @@ sub run {
 
     select_console 'root-console';
     # We don't need any logs from support server when running on REMOTE_CONTROLLER for remote SLE installation tests
-    type_string("journalctl -f |tee /dev/$serialdev\n") unless (get_var('REMOTE_CONTROLLER'));
+    type_string("journalctl -f -o short-monotonic |tee /dev/$serialdev\n") unless (get_var('REMOTE_CONTROLLER'));
 
+    if (check_var("REMOTE_CONTROLLER", "ssh") || check_var("REMOTE_CONTROLLER", "vnc")) {
+        mutex_create("installation_done");
+    }
     wait_for_children;
 
     unless (get_var('REMOTE_CONTROLLER')) {
@@ -41,7 +48,7 @@ sub run {
         # No messages file in openSUSE which use journal by default
         # Write journal log to /var/log/messages for openSUSE
         if (check_var('DISTRI', 'opensuse')) {
-            script_run 'journalctl -b -x > /var/log/messages', 90;
+            script_run 'journalctl -b -x -o short-precise > /var/log/messages', 90;
         }
         my $log_cmd = "tar cjf /tmp/logs.tar.bz2 /var/log/messages ";
         if (exists $server_roles{qemuproxy} || exists $server_roles{aytest}) {

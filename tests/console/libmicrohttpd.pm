@@ -1,6 +1,6 @@
 # SUSE's openQA tests - FIPS tests
 #
-# Copyright © 2016 SUSE LLC
+# Copyright © 2016-2019 SUSE LLC
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -8,7 +8,7 @@
 # without any warranty.
 
 # Summary: Case 1525263 - Verify libmicrohttpd via Greenbone Security Assistant
-# Maintainer: Wei Jiang <wjiang@suse.com>
+# Maintainer: Ben Chou <bchou@suse.com>
 
 use base "consoletest";
 use strict;
@@ -20,7 +20,7 @@ sub run {
     select_console 'root-console';
 
     # Install greenbone-security-assistant
-    zypper_call("in greenbone-security-assistant");
+    zypper_call("--no-gpg-checks in greenbone-security-assistant");
 
     # Create self-signed certificates
     clear_console;

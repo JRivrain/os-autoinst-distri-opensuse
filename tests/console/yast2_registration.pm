@@ -9,9 +9,20 @@
 
 # Summary: check if an unregistered system can be registered and if
 #          enabling and disabling extensions correctly work.
+# - Install yast2-registration
+# - Cleanup registration (SUSEConnect --cleanup)
+# - Launch yast2 registration
+# - Fill email and registration code (using system variables)
+# - Enable web and scripting modules
+# - Accept license agreement
+# - Accept install summary
+# - Accept automatic changes
+# - Wait for installation report
+# - Check registration status by checking output of "SUSEConnect --status-text"
 # Maintainer: Paolo Stivanin <pstivanin@suse.com>
 
 use base "opensusebasetest";
+
 use strict;
 use warnings;
 use testapi;
@@ -23,23 +34,26 @@ sub register_system_and_add_extension {
     send_key "tab";
     wait_screen_change { type_string get_var "SCC_REGCODE" };
     send_key "alt-n";
-    assert_screen("yast2_registration-ext-mod-selection", timeout => 60);
+    assert_screen("yast2_registration-ext-mod-selection", timeout => 120);
     # enable Web and Scripting Module
     for my $i (0 .. 25) {
         send_key "down";
     }
     wait_screen_change { send_key "spc" };
     send_key "alt-n";
-    wait_still_screen(stilltime => 7, timeout => 60);
+    wait_still_screen(stilltime => 15, timeout => 60);
     if (check_screen "yast2_registration-license-agreement") {
         wait_screen_change { send_key "alt-a" };
         send_key "alt-n";
-        wait_still_screen 5;
+        wait_still_screen 2;
     }
+    assert_screen 'yast2-software-installation-summary', 90;
     send_key "alt-a";
     wait_still_screen 2;
+    assert_screen 'yast2-sw_automatic-changes';
     send_key "alt-o";
-    wait_still_screen 5;
+    wait_still_screen 2;
+    assert_screen 'installation-report';
     wait_screen_change { send_key "alt-f" };
 }
 
@@ -51,11 +65,12 @@ sub run {
     zypper_call "in yast2-registration";
 
     cleanup_registration;
-    y2logsstep::yast2_console_exec(yast2_module => 'registration');
+    my $module_name = y2_module_consoletest::yast2_console_exec(yast2_module => 'registration');
     assert_screen([qw(yast2_registration-overview yast2_registration-registration-page)]);
 
     send_key "alt-e" if (match_has_tag "yast2_registration-overview");
     register_system_and_add_extension;
+    wait_serial("$module_name-0", 200) || die "'yast2 $module_name' didn't finish";
 
     assert_script_run "SUSEConnect --status-text |grep -A3 -E 'SUSE Linux Enterprise Server|Web and Scripting Module' | grep -qE '^\\s+Registered'";
 }
