@@ -24,7 +24,7 @@ my %ldap_directives = (
     dir_instance        => 'openqatest',
     dir_suffix          => 'dc=ldaptest,dc=org',
     dn_container        => 'dc=ldaptest,dc=org',
-    dir_manager_dn      => 'cn=root',
+    dir_manager_dn      => 'cn=Directory Manager',
     dir_manager_passwd  => 'openqatest',
     ca_cert_pem         => '/root/samba_ca_cert.pem',
     srv_cert_key_pkcs12 => '/root/samba_server_cert.p12'
