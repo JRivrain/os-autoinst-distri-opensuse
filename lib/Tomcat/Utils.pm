@@ -42,8 +42,8 @@ sub tomcat_setup() {
     # we need to disable packagekit because it can block zypper sometimes later
     quit_packagekit if is_sle;
 
-    zypper_call('in tomcat tomcat-webapps tomcat-admin-webapps', timeout => 300);
-    assert_script_run('rpm -q tomcat');
+    zypper_call('in tomcat10 tomcat10-webapps tomcat10-admin-webapps', timeout => 300);
+    assert_script_run('rpm -q tomcat10');
 
     # start the tomcat daemon and check that it is running
     systemctl('start tomcat');
