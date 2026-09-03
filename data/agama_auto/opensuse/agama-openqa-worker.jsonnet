@@ -1,7 +1,10 @@
 local agama = import 'hw.libsonnet';
 
-// Hardcode the target release version because the live installer OS /etc/os-release cannot be used here
-local releasever = '16.0';
+// Extract release version from /etc/os-release
+local os_release = importstr '/etc/os-release';
+local os_release_lines = std.split(os_release, '\n');
+local version_id_lines = std.filter(function(l) std.startsWith(l, 'VERSION_ID='), os_release_lines);
+local releasever = if std.length(version_id_lines) > 0 then std.strReplace(std.strReplace(version_id_lines[0], 'VERSION_ID=', ''), '"', '') else error 'VERSION_ID not found in /etc/os-release';
 
 // --- DISK DETECTION ---
 local disks = agama.selectByClass(agama.lshw, 'disk');
