@@ -23,6 +23,7 @@ use bootloader_hyperv;
 use bootloader_svirt;
 use bootloader_zkvm;
 use bootloader_s390;
+use bootloader_qemu_s390;
 use ipxe_install;
 use version_utils qw(:SCENARIO :BACKEND);
 use Utils::Architectures;
@@ -52,6 +53,11 @@ sub run {
     if (is_s390x() && check_var("BACKEND", "svirt")) {
         record_info('bootloader_zkvm');
         $self->bootloader_zkvm::run();
+        return;
+    }
+        if (is_s390x() && is_qemu) {
+        record_info('bootloader_qemu_s390');
+        $self->bootloader_qemu_s390::run();
         return;
     }
     if (is_svirt && is_x86_64()) {
